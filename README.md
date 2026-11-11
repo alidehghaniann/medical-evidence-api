@@ -160,6 +160,14 @@ The local stdio MCP server exposes `medical_search` (`query`, optional `language
 python -m app.mcp_server
 ```
 
+## Medical Agent
+
+The lightweight CLI routes evidence-search requests to `medical_search` and medical synthesis questions to `medical_ask`. It returns the selected tool's typed result unchanged, preserves abstention, and does not generate medical answers on its own. Clearly non-medical questions are declined without starting the MCP server. Example:
+
+```powershell
+python -m app.medical_agent "Find recent guidelines about asthma"
+```
+
 ## Current limitations
 
 - PubMed search uses ESearch, ESummary, and EFetch; abstracts may be absent in PubMed records.
