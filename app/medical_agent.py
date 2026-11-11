@@ -39,7 +39,7 @@ _SYNTHESIS_INTENT = re.compile(
     re.IGNORECASE,
 )
 _PUBMED_INTENT = re.compile(
-    r"\b(?:stud(?:y|ies)|research|papers?|pubmed|clinical trials?|recent literature|scientific evidence)\b",
+    r"\bpubmed\b",
     re.IGNORECASE,
 )
 _EUROPEPMC_INTENT = re.compile(r"\beurope[\s-]*pmc\b", re.IGNORECASE)

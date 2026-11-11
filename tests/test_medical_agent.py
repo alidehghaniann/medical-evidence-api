@@ -101,18 +101,30 @@ async def test_evidence_search_question_selects_medical_search():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question", [
-    "Find studies about diabetes",
-    "Show me recent research on asthma",
     "Search PubMed for clinical trials on migraine",
-    "Find recent literature about hypertension",
-    "Show scientific evidence about GERD",
+    "Compare studies found in PubMed about diabetes",
 ])
-async def test_pubmed_retrieval_intent_selects_pubmed_search(question):
+async def test_explicit_pubmed_request_selects_pubmed_search(question):
     client = FakeMCPClient(search_response())
     response = await MedicalAgent(client).respond(question)
     assert response.tool_name == "pubmed_search"
     assert isinstance(response.result, SearchResponse)
     assert client.tool_calls[0][0] == "pubmed_search"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("question", [
+    "Find studies about diabetes",
+    "Show me recent research on asthma",
+    "Find recent literature about hypertension",
+    "Show scientific evidence about GERD",
+])
+async def test_general_research_request_selects_shared_medical_search(question):
+    client = FakeMCPClient(search_response())
+    response = await MedicalAgent(client).respond(question)
+    assert response.tool_name == "medical_search"
+    assert isinstance(response.result, SearchResponse)
+    assert client.tool_calls[0][0] == "medical_search"
 
 
 @pytest.mark.asyncio
