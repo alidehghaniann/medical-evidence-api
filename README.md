@@ -26,7 +26,7 @@ pip install -e ".[dev]"
 Copy-Item .env.example .env
 ```
 
-The sample `.env` selects `ANSWER_PROVIDER=dev` for local development without LLM credentials. This provider and its exact-text verifier are DEVELOPMENT/TEST ONLY and are not clinical reasoning tools. Set `ANSWER_PROVIDER=perplexity` and configure `PERPLEXITY_API_KEY` to use real Perplexity synthesis and claim verification. Production rejects the development provider. PubMed works without an API key; an NCBI email is recommended. Never commit `.env` or credentials.
+The sample `.env` selects `ANSWER_PROVIDER=dev` and `QUERY_UNDERSTANDING_PROVIDER=ollama` for local development. The development answer provider and exact-text verifier are DEVELOPMENT/TEST ONLY and are not clinical reasoning tools. Persian query understanding uses the local Ollama HTTP API and requires `OLLAMA_MODEL` to name an installed local model; it does not require a Perplexity key. Set `QUERY_UNDERSTANDING_PROVIDER=perplexity` and configure `PERPLEXITY_API_KEY` to use Perplexity for query understanding. Production defaults to Perplexity query understanding. Set `ANSWER_PROVIDER=perplexity` to use real Perplexity synthesis and claim verification. Production rejects the development answer provider. PubMed works without an API key; an NCBI email is recommended. Never commit `.env` or credentials.
 
 ## Configuration
 
@@ -34,6 +34,9 @@ The sample `.env` selects `ANSWER_PROVIDER=dev` for local development without LL
 | --- | --- |
 | `ANSWER_PROVIDER` | `dev` for deterministic extractive development/testing, or `perplexity` for real synthesis; defaults to `perplexity` |
 | `PERPLEXITY_API_KEY` | Required when `ANSWER_PROVIDER=perplexity`; also enables optional Perplexity retrieval |
+| `QUERY_UNDERSTANDING_PROVIDER` | `ollama` or `perplexity`; defaults to Ollama in development/test and Perplexity otherwise |
+| `OLLAMA_BASE_URL` | Ollama local API base URL, defaults to `http://127.0.0.1:11434` |
+| `OLLAMA_MODEL` | Required when Ollama query understanding is selected; a model installed locally in Ollama |
 | `NCBI_API_KEY` | Optional NCBI E-utilities key for higher rate limits |
 | `NCBI_EMAIL` | Contact email sent to NCBI |
 | `APP_ENV` | Environment label, defaults to `development` |
@@ -74,7 +77,7 @@ Persian request:
 {"query":"شواهد درباره درمان هلیکوباکتر پیلوری چیست؟","language":"fa","limit":10}
 ```
 
-The API detects Persian or English from the query text; the `language` field is retained for compatibility and is normalized to the detected language. Persian queries are Unicode-normalized and passed to the existing Perplexity integration for a concise, search-ready biomedical representation when `PERPLEXITY_API_KEY` is configured. PubMed and Europe PMC receive that representation through the shared search service. Without query-understanding configuration, Persian queries return an explicit abstention and are not sent untranslated to the literature providers. Retrieved titles and abstracts remain in their source language.
+The API detects Persian or English from the query text; the `language` field is retained for compatibility and is normalized to the detected language. Persian queries are Unicode-normalized and passed to the selected query-understanding provider for a validated, search-ready biomedical representation. In development this is local Ollama by default; in production it is Perplexity by default. If the selected provider is unavailable or returns invalid data, the request abstains and the original Persian text is not sent untranslated to literature providers. Retrieved titles and abstracts remain in their source language.
 
 Responses include the query, a conservative status, provider statuses, a medical-use disclaimer, and ranked evidence records with source IDs, publication metadata, and URLs. `/search` returns retrieved records without a synthesized recommendation. `/ask` can synthesize a cited informational response from those records; callers should review the source material directly. Provider failure is reflected in `provider_status` and does not prevent the remaining provider from returning results.
 
@@ -184,7 +187,7 @@ python -m app.medical_agent "Find recent guidelines about asthma"
 - No automated claim-to-passage entailment verification, clinical conflict analysis, or validated grading methodology is implemented.
 - Conflicting evidence is not systematically detected; the answer flow does not establish consensus across retrieved sources.
 - `/search` returns evidence only; `/ask` produces informational synthesis but does not provide individualized treatment advice.
-- Persian search uses the configured Perplexity integration to prepare a search-ready query. Without that configuration, Persian evidence search abstains rather than querying with untranslated text. Query understanding and evidence ranking are not validated medical systems.
+- Persian search uses the configured Ollama or Perplexity provider to prepare a search-ready query. Query understanding and evidence ranking are not validated medical systems.
 - Claim support checks use an LLM and are not a validated medical fact-checking method; errors and low-confidence checks fail closed as uncertain.
 - This service is not for emergencies or individual treatment decisions.
 

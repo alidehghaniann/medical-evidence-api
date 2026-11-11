@@ -7,11 +7,13 @@ from app.providers.claim_verifier_base import ClaimVerifier
 from app.providers.dev_answer import DevAnswerProvider
 from app.providers.dev_claim_verifier import DevClaimVerifier
 from app.providers.europepmc import EuropePMCProvider
+from app.providers.ollama_query_understanding import OllamaQueryUnderstandingProvider
 from app.providers.perplexity import PerplexityProvider
 from app.providers.perplexity_answer import PerplexityAnswerProvider
 from app.providers.perplexity_claim_verifier import PerplexityClaimVerifier
 from app.providers.pubmed import PubMedProvider
 from app.services.medical_application import MedicalApplicationError
+from app.services.query_understanding import QueryUnderstander
 from app.services.search import MedicalSearchService
 
 
@@ -29,12 +31,15 @@ async def search_service_context(settings: Settings) -> AsyncIterator[MedicalSea
 
 
 @asynccontextmanager
-async def query_understander_context(settings: Settings) -> AsyncIterator[PerplexityAnswerProvider | None]:
-    """Reuse the configured Perplexity provider for language-aware query preparation."""
-    if not settings.perplexity_api_key:
-        yield None
-        return
-    provider = PerplexityAnswerProvider(settings)
+async def query_understander_context(settings: Settings) -> AsyncIterator[QueryUnderstander | None]:
+    """Select the configured local or hosted query-understanding provider."""
+    if settings.effective_query_understanding_provider == "ollama":
+        provider = OllamaQueryUnderstandingProvider(settings)
+    else:
+        if not settings.perplexity_api_key:
+            yield None
+            return
+        provider = PerplexityAnswerProvider(settings)
     try:
         yield provider
     finally:

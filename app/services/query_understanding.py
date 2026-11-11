@@ -13,7 +13,7 @@ from app.models.medical_query import (
 class QueryUnderstander(Protocol):
     async def understand_query(
         self, query: str, normalized_query: str
-    ) -> SearchQueryRepresentation:
+    ) -> MedicalQuery:
         """Prepare a Persian query for biomedical literature search."""
 
 
@@ -70,6 +70,21 @@ async def understand_medical_query(
         )
 
     representation = await query_understander.understand_query(query, normalized)
+    if isinstance(representation, MedicalQuery):
+        if (
+            representation.original_query != query
+            or representation.language != language
+            or representation.normalized_query != normalized
+            or not representation.search_query
+            or not representation.medical_terms
+        ):
+            raise ValueError("Query understanding returned an inconsistent medical query")
+        SearchQueryRepresentation(
+            search_query=representation.search_query,
+            medical_terms=representation.medical_terms,
+            intent=representation.intent,
+        )
+        return representation
     if not isinstance(representation, SearchQueryRepresentation):
         representation = SearchQueryRepresentation.model_validate(representation)
     return MedicalQuery(

@@ -6,7 +6,7 @@ import httpx
 from app.core.config import Settings
 from app.models.answer import AnswerResult
 from app.models.evidence import EvidenceRecord
-from app.models.medical_query import SearchQueryRepresentation
+from app.models.medical_query import MedicalQuery, SearchQueryRepresentation
 from app.providers.answer_base import AnswerProvider
 
 
@@ -51,7 +51,7 @@ class PerplexityAnswerProvider(AnswerProvider):
 
     async def understand_query(
         self, query: str, normalized_query: str
-    ) -> SearchQueryRepresentation:
+    ) -> MedicalQuery:
         """Translate and condense a Persian question for biomedical indexes."""
         instructions = (
             "Prepare the supplied Persian medical question for PubMed and Europe PMC search. "
@@ -85,7 +85,14 @@ class PerplexityAnswerProvider(AnswerProvider):
         generic_tokens = {"a", "an", "and", "for", "in", "of", "or", "the", "to", "with"}
         if search_tokens - declared_tokens - generic_tokens:
             raise ValueError("Query understanding returned undeclared search concepts")
-        return representation
+        return MedicalQuery(
+            original_query=query,
+            language="fa",
+            normalized_query=normalized_query,
+            search_query=representation.search_query,
+            medical_terms=representation.medical_terms,
+            intent=representation.intent,
+        )
 
     async def _request_text(
         self,
