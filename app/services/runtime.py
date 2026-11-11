@@ -15,7 +15,7 @@ from app.services.search import MedicalSearchService
 
 @asynccontextmanager
 async def search_service_context(settings: Settings) -> AsyncIterator[MedicalSearchService]:
-    providers = [PubMedProvider(settings)]
+    providers = [PubMedProvider(settings), EuropePMCProvider(settings)]
     if settings.perplexity_api_key:
         providers.append(PerplexityProvider(settings))
     try:

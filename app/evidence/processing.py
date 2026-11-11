@@ -53,7 +53,11 @@ def rank_records(records: list[EvidenceRecord], query: str) -> list[EvidenceReco
     for item in records:
         text_terms = set(re.findall(r"[\w]+", f"{item.title} {item.abstract or ''}".lower()))
         item.relevance_score = len(terms & text_terms) / max(1, len(terms))
-        item.authority_score = {"pubmed": 0.55, "perplexity": 0.35}.get(item.source.lower(), 0.25)
+        item.authority_score = {
+            "pubmed": 0.55,
+            "europepmc": 0.55,
+            "perplexity": 0.35,
+        }.get(item.source.lower(), 0.25)
         item.recency_score = max(0.0, 1 - (current_year - item.publication_year) / 20) if item.publication_year else 0.2
         evidence_boost = {"systematic_review": 0.12, "guideline": 0.12, "randomized_trial": 0.08}.get(item.evidence_type, 0.0)
         item.rank_score = min(1.0, 0.55 * item.relevance_score + 0.25 * item.authority_score + 0.20 * item.recency_score + evidence_boost)
