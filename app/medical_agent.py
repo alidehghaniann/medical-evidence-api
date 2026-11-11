@@ -14,12 +14,12 @@ from pydantic import BaseModel
 from app.models.answer import AskResponse
 from app.models.evidence import SearchRequest, SearchResponse
 
-MedicalTool = Literal["medical_search", "medical_ask"]
+MedicalTool = Literal["medical_search", "medical_ask", "pubmed_search"]
 
 _MEDICAL_TERMS = re.compile(
     r"\b(?:medical|health|clinical|medicine|medicines|medication|medications|drug|drugs|"
     r"treatment|therapy|diagnosis|diagnose|symptom|symptoms|disease|condition|illness|"
-    r"patient|dose|dosage|side effect|adverse event|guideline|clinical trial|"
+    r"patient|dose|dosage|side effect|adverse event|guideline|clinical trial|pubmed|"
     r"gerd|copd|hiv|aids|covid(?:-19)?|diabetes|hypertension|migraine|asthma|cancer|"
     r"pneumonia|influenza|hepatitis|ulcer|h\.?\s*pylori)\b|"
     r"پزشک|پزشکی|سلامت|درمان|دارو|علائم|بیماری|تشخیص|بالینی|شواهد|پژوهش|مقاله|راهنما|"
@@ -36,6 +36,10 @@ _SYNTHESIS_INTENT = re.compile(
     r"\b(?:explain|interpret|compare|contrast|summari[sz]e|summary|difference between|"
     r"what does .+ mean|how does .+ work|implications?)\b|"
     r"توضیح|مقایسه|تفسیر|تفاوت|خلاصه|معنی",
+    re.IGNORECASE,
+)
+_PUBMED_INTENT = re.compile(
+    r"\b(?:stud(?:y|ies)|research|papers?|pubmed|clinical trials?|recent literature|scientific evidence)\b",
     re.IGNORECASE,
 )
 
@@ -57,6 +61,8 @@ def select_medical_tool(question: str) -> MedicalTool | None:
     """Apply a small explicit policy; this function never generates an answer."""
     if not _MEDICAL_TERMS.search(question):
         return None
+    if _PUBMED_INTENT.search(question):
+        return "pubmed_search"
     if _SYNTHESIS_INTENT.search(question):
         return "medical_ask"
     if _SEARCH_INTENT.search(question):
@@ -89,7 +95,7 @@ class MedicalAgent:
             if response.isError or response.structuredContent is None:
                 return _tool_error(tool_name)
 
-            result_type = SearchResponse if tool_name == "medical_search" else AskResponse
+            result_type = AskResponse if tool_name == "medical_ask" else SearchResponse
             result = result_type.model_validate(response.structuredContent)
             return AgentResult(
                 status="abstained" if result.abstained else "ok",

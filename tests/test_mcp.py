@@ -8,7 +8,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 import app.mcp_server as mcp_server
 from app.core.config import Settings
 from app.models.answer import AnswerClaim, AnswerResult, ClaimVerification, ProviderCitation
-from app.models.evidence import EvidenceRecord, SearchResponse
+from app.models.evidence import EvidenceRecord, SearchRequest, SearchResponse
 from app.services import medical_application
 from app.services import runtime as provider_runtime
 from app.services.search import MedicalSearchService
@@ -105,9 +105,10 @@ def test_mcp_server_imports_and_publishes_typed_tools():
 
     tools = asyncio.run(inspect_tools())
     by_name = {tool.name: tool for tool in tools}
-    assert set(by_name) >= {"medical_search", "medical_ask"}
+    assert set(by_name) == {"medical_search", "medical_ask", "pubmed_search"}
     assert by_name["medical_search"].inputSchema["properties"]["query"]["type"] == "string"
     assert "outputSchema" in by_name["medical_search"].model_dump(by_alias=True)
+    assert by_name["pubmed_search"].inputSchema["properties"]["language"]["enum"] == ["en", "fa"]
 
 
 @pytest.mark.asyncio
@@ -116,6 +117,25 @@ async def test_medical_search_tool_calls_shared_search_service(runtime):
     response = await mcp_server.medical_search("treatment evidence")
     assert response.provider_status == {"fake": "ok"}
     assert response.evidence[0].source_id == "123"
+
+
+@pytest.mark.asyncio
+async def test_pubmed_mcp_tool_calls_shared_application_and_provider(monkeypatch):
+    class FakePubMedProvider:
+        async def search(self, query, limit=10):
+            assert query == "PubMed asthma studies"
+            assert limit == 10
+            return [evidence_record()]
+
+    @asynccontextmanager
+    async def provider_context(_settings):
+        yield FakePubMedProvider()
+
+    monkeypatch.setattr(mcp_server, "pubmed_provider_context", provider_context)
+    response = await mcp_server.pubmed_search("PubMed asthma studies", "en")
+    assert response.evidence[0].source_id == "123"
+    assert response.provider_status == {"pubmed": "ok"}
+    assert mcp_server.run_pubmed_search is medical_application.pubmed_search
 
 
 @pytest.mark.asyncio

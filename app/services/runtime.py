@@ -25,6 +25,15 @@ async def search_service_context(settings: Settings) -> AsyncIterator[MedicalSea
 
 
 @asynccontextmanager
+async def pubmed_provider_context(settings: Settings) -> AsyncIterator[PubMedProvider]:
+    provider = PubMedProvider(settings)
+    try:
+        yield provider
+    finally:
+        await provider.close()
+
+
+@asynccontextmanager
 async def answer_provider_context(settings: Settings) -> AsyncIterator[AnswerProvider]:
     if not settings.perplexity_api_key:
         raise MedicalApplicationError(503, "No answer provider is configured.")

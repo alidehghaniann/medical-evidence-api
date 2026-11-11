@@ -4,6 +4,7 @@ from app.models.answer import AnswerCitation, AnswerResult, AskResponse, ClaimTo
 from app.models.evidence import SearchRequest, SearchResponse
 from app.providers.answer_base import AnswerProvider
 from app.providers.claim_verifier_base import ClaimVerifier
+from app.providers.pubmed import PubMedProvider
 from app.services.citation_validation import InvalidCitationError, map_citations
 from app.services.search import MedicalSearchService
 
@@ -19,6 +20,33 @@ class MedicalApplicationError(Exception):
 
 async def medical_search(request: SearchRequest, service: MedicalSearchService) -> SearchResponse:
     return await service.search(request)
+
+
+async def pubmed_search(request: SearchRequest, provider: PubMedProvider) -> SearchResponse:
+    """Return PubMed records through the existing normalized evidence schema."""
+    try:
+        records = await provider.search(request.query, request.limit)
+    except Exception as exc:
+        raise MedicalApplicationError(502, "PubMed provider failed.") from exc
+
+    found = bool(records)
+    return SearchResponse(
+        query=request.query,
+        language=request.language,
+        answer=(
+            "Retrieved PubMed records are listed below."
+            if found
+            else "No PubMed records matched the query."
+        ),
+        abstained=not found,
+        uncertainty=None if found else "PubMed returned no matching records.",
+        evidence=records,
+        provider_status={"pubmed": "ok" if found else "no_results"},
+        disclaimer=(
+            "PubMed metadata and abstracts are provided as research information; "
+            "this response does not provide diagnosis or treatment advice."
+        ),
+    )
 
 
 async def medical_ask(

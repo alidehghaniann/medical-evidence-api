@@ -8,7 +8,10 @@ from app.providers.pubmed import PubMedProvider
 
 @pytest.mark.asyncio
 async def test_pubmed_uses_eutilities_and_extracts_metadata_and_abstract():
+    requests = []
+
     def handler(request):
+        requests.append(request)
         if request.url.path.endswith("esearch.fcgi"):
             return httpx.Response(200, json={"esearchresult": {"idlist": ["42"]}})
         if request.url.path.endswith("esummary.fcgi"):
@@ -26,6 +29,32 @@ async def test_pubmed_uses_eutilities_and_extracts_metadata_and_abstract():
     assert records[0].abstract == "Test abstract."
     assert records[0].doi == "10.1/example"
     assert str(records[0].url) == "https://pubmed.ncbi.nlm.nih.gov/42/"
+    assert requests[0].url.path.endswith("esearch.fcgi")
+    assert requests[0].url.params["db"] == "pubmed"
+    assert requests[0].url.params["term"] == "test query"
+    assert requests[0].url.params["retmax"] == "5"
+    assert requests[0].url.params["tool"] == "medical-evidence-api"
+    assert requests[0].url.params["email"] == "research@example.org"
+    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == [
+        "esearch.fcgi", "esummary.fcgi", "efetch.fcgi"
+    ]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pubmed_zero_results_make_no_record_fetch_request():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"esearchresult": {"idlist": []}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = PubMedProvider(Settings(), client=client)
+    assert await provider.search("no matching study") == []
+    assert len(requests) == 1
+    assert requests[0].url.params["db"] == "pubmed"
+    assert "api_key" not in requests[0].url.params
     await client.aclose()
 
 

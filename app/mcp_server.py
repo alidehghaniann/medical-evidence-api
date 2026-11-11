@@ -10,7 +10,8 @@ from app.models.answer import AskResponse
 from app.models.evidence import SearchRequest, SearchResponse
 from app.services.medical_application import MedicalApplicationError, medical_ask as run_medical_ask
 from app.services.medical_application import medical_search as run_medical_search
-from app.services.runtime import answer_provider_context, claim_verifier_context, search_service_context
+from app.services.medical_application import pubmed_search as run_pubmed_search
+from app.services.runtime import answer_provider_context, claim_verifier_context, pubmed_provider_context, search_service_context
 
 mcp = FastMCP("Medical Evidence API")
 
@@ -40,6 +41,17 @@ async def medical_ask(query: Query, language: Language = "en") -> AskResponse:
             answer_provider = await stack.enter_async_context(answer_provider_context(settings))
             claim_verifier = await stack.enter_async_context(claim_verifier_context(settings))
             return await run_medical_ask(request, service, answer_provider, claim_verifier)
+    except MedicalApplicationError as exc:
+        raise ToolError(f"{exc.status_code}: {exc.detail}") from exc
+
+
+@mcp.tool()
+async def pubmed_search(query: Query, language: Language = "en") -> SearchResponse:
+    """Retrieve PubMed metadata and abstracts through NCBI E-utilities."""
+    request = SearchRequest(query=query, language=language)
+    try:
+        async with pubmed_provider_context(get_settings()) as provider:
+            return await run_pubmed_search(request, provider)
     except MedicalApplicationError as exc:
         raise ToolError(f"{exc.status_code}: {exc.detail}") from exc
 

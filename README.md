@@ -154,7 +154,7 @@ They cover health routes, validation, failure behavior, missing optional credent
 
 ## Local MCP server
 
-The local stdio MCP server exposes `medical_search` (`query`, optional `language`) and `medical_ask` (`query`, optional `language`). Both return typed, machine-readable response models and call the same Medical Evidence Core as REST; MCP does not bypass citation validation, claim verification, or abstention. Run it from the repository root with:
+The local stdio MCP server exposes `medical_search`, `medical_ask`, and `pubmed_search` (`query`, optional `language`). The first two return typed results from the Medical Evidence Core; MCP does not bypass citation validation, claim verification, or abstention. `pubmed_search` uses NCBI E-utilities to retrieve PubMed metadata and abstracts. It does not download arbitrary full-text articles. Run the server from the repository root with:
 
 ```powershell
 python -m app.mcp_server
@@ -162,7 +162,7 @@ python -m app.mcp_server
 
 ## Medical Agent
 
-The lightweight CLI routes evidence-search requests to `medical_search` and medical synthesis questions to `medical_ask`. It returns the selected tool's typed result unchanged, preserves abstention, and does not generate medical answers on its own. Clearly non-medical questions are declined without starting the MCP server. Example:
+The lightweight CLI routes explicit study, research, paper, PubMed, clinical trial, recent literature, and scientific evidence requests to `pubmed_search`; broader source discovery goes to `medical_search`, and synthesis questions go to `medical_ask`. It returns the selected tool's typed result unchanged, preserves abstention, and does not generate medical answers on its own. Clearly non-medical questions are declined without starting the MCP server. Example:
 
 ```powershell
 python -m app.medical_agent "Find recent guidelines about asthma"
