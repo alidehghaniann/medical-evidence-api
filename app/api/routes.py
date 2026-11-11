@@ -1,6 +1,8 @@
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from app.core.config import Settings, get_settings
 from app.models.answer import AskResponse
@@ -12,6 +14,7 @@ from app.services.runtime import answer_provider_context, claim_verifier_context
 from app.services.search import MedicalSearchService
 
 router = APIRouter()
+DEMO_PAGE = Path(__file__).resolve().parents[1] / "static" / "index.html"
 
 
 async def get_service(settings: Settings = Depends(get_settings)) -> AsyncGenerator[MedicalSearchService, None]:
@@ -43,6 +46,11 @@ async def root() -> dict[str, str]:
 @router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/demo", include_in_schema=False)
+async def demo_page() -> FileResponse:
+    return FileResponse(DEMO_PAGE, media_type="text/html; charset=utf-8")
 
 
 @router.post(

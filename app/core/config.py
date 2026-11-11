@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -8,6 +9,7 @@ class Settings(BaseSettings):
     ncbi_api_key: str | None = None
     ncbi_email: str | None = None
     perplexity_api_key: str | None = None
+    answer_provider: Literal["perplexity", "dev"] = "perplexity"
     request_timeout_seconds: float = 15.0
     max_search_results: int = 10
     minimum_evidence_score: float = 0.25

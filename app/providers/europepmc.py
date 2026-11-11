@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from html import unescape
 import re
 
 import httpx
@@ -121,4 +122,10 @@ class EuropePMCProvider(EvidenceProvider):
 
     @staticmethod
     def _text(value) -> str | None:
-        return value.strip() if isinstance(value, str) and value.strip() else None
+        if not isinstance(value, str) or not value.strip():
+            return None
+        text = value.strip()
+        for _ in range(2):
+            text = unescape(text)
+        text = re.sub(r"<[^>]*>", " ", text)
+        return " ".join(text.split()) or None

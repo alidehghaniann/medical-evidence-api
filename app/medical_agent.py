@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import os
 import re
 import sys
 from typing import Literal, Protocol
@@ -125,9 +126,18 @@ async def _run(question: str, language: Literal["en", "fa"]) -> AgentResult:
             message="This agent handles medical evidence questions only.",
         )
 
+    # MCP's stdio client inherits only its safe environment allowlist. Forward
+    # the two non-secret settings needed for development-provider selection and
+    # its production guard; credentials remain out of the child environment.
+    runtime_env = {
+        name: os.environ[name]
+        for name in ("APP_ENV", "ANSWER_PROVIDER")
+        if name in os.environ
+    }
     server = StdioServerParameters(
         command=sys.executable,
         args=["-m", "app.mcp_server"],
+        env=runtime_env,
     )
     async with stdio_client(server) as (read_stream, write_stream):
         async with ClientSession(read_stream, write_stream) as session:

@@ -12,7 +12,7 @@ from app.services.medical_application import MedicalApplicationError, medical_as
 from app.services.medical_application import europepmc_search as run_europepmc_search
 from app.services.medical_application import medical_search as run_medical_search
 from app.services.medical_application import pubmed_search as run_pubmed_search
-from app.services.runtime import answer_provider_context, claim_verifier_context, europepmc_provider_context, pubmed_provider_context, search_service_context
+from app.services.runtime import answer_provider_context, claim_verifier_context, europepmc_provider_context, pubmed_provider_context, query_understander_context, search_service_context
 
 mcp = FastMCP("Medical Evidence API")
 
@@ -51,8 +51,11 @@ async def pubmed_search(query: Query, language: Language = "en") -> SearchRespon
     """Retrieve PubMed metadata and abstracts through NCBI E-utilities."""
     request = SearchRequest(query=query, language=language)
     try:
-        async with pubmed_provider_context(get_settings()) as provider:
-            return await run_pubmed_search(request, provider)
+        async with AsyncExitStack() as stack:
+            settings = get_settings()
+            provider = await stack.enter_async_context(pubmed_provider_context(settings))
+            query_understander = await stack.enter_async_context(query_understander_context(settings))
+            return await run_pubmed_search(request, provider, query_understander)
     except MedicalApplicationError as exc:
         raise ToolError(f"{exc.status_code}: {exc.detail}") from exc
 
@@ -62,8 +65,11 @@ async def europepmc_search(query: Query, language: Language = "en") -> SearchRes
     """Retrieve Europe PMC publication metadata and abstracts."""
     request = SearchRequest(query=query, language=language)
     try:
-        async with europepmc_provider_context(get_settings()) as provider:
-            return await run_europepmc_search(request, provider)
+        async with AsyncExitStack() as stack:
+            settings = get_settings()
+            provider = await stack.enter_async_context(europepmc_provider_context(settings))
+            query_understander = await stack.enter_async_context(query_understander_context(settings))
+            return await run_europepmc_search(request, provider, query_understander)
     except MedicalApplicationError as exc:
         raise ToolError(f"{exc.status_code}: {exc.detail}") from exc
 

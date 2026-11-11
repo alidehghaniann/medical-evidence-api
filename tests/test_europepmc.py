@@ -19,14 +19,14 @@ async def test_europepmc_search_uses_official_json_api_and_normalizes_record():
                 "id": "123456",
                 "source": "MED",
                 "pmid": "123456",
-                "title": "A Europe PMC study",
+                "title": "A &lt;i&gt;Europe PMC&lt;/i&gt; study",
                 "authorList": {"author": [
                     {"fullName": "Ada Author"}, {"fullName": "B. Researcher"},
                 ]},
                 "journalTitle": "Example Medical Journal",
                 "pubYear": "2024",
                 "firstPublicationDate": "2024-02-03",
-                "abstractText": "Study abstract.",
+                "abstractText": "&lt;h4&gt;BACKGROUND&lt;/h4&gt; Study &amp;amp; abstract.",
                 "doi": "10.1234/example",
             }]},
         })
@@ -50,7 +50,7 @@ async def test_europepmc_search_uses_official_json_api_and_normalizes_record():
     assert record.title == "A Europe PMC study"
     assert record.journal == "Example Medical Journal"
     assert record.publication_year == 2024
-    assert record.abstract == "Study abstract."
+    assert record.abstract == "BACKGROUND Study & abstract."
     assert record.authors == ["Ada Author", "B. Researcher"]
     assert record.doi == "10.1234/example"
     assert str(record.url) == "https://europepmc.org/article/MED/123456"

@@ -12,7 +12,7 @@ FastAPI routes -> search service -> provider interface
        evidence normalization -> deduplication -> heuristic ranking -> citation checks
 ```
 
-Providers implement a shared asynchronous interface and can fail independently. PubMed uses NCBI E-utilities; Perplexity is optional and only enabled when `PERPLEXITY_API_KEY` is configured. Its Agent API web search results are retained with their returned URLs. Generated prose is never treated as a source record. The evidence rank is a transparent heuristic, not a validated evidence-grading system.
+Providers implement shared asynchronous interfaces and can fail independently. PubMed uses NCBI E-utilities; the optional Perplexity search provider is enabled when `PERPLEXITY_API_KEY` is configured. Perplexity is also the real answer and claim-verification provider when `ANSWER_PROVIDER=perplexity`. The development-only provider returns an exact sentence from matching retrieved abstract evidence and uses an exact-text verifier; it does not synthesize, translate, browse, or add medical knowledge. The evidence rank is a transparent heuristic, not a validated evidence-grading system.
 
 ## Requirements and Windows installation
 
@@ -26,13 +26,14 @@ pip install -e ".[dev]"
 Copy-Item .env.example .env
 ```
 
-Edit `.env` to add credentials as needed. PubMed works without an API key; an NCBI email is recommended. Perplexity is not required. Never commit `.env` or credentials.
+The sample `.env` selects `ANSWER_PROVIDER=dev` for local development without LLM credentials. This provider and its exact-text verifier are DEVELOPMENT/TEST ONLY and are not clinical reasoning tools. Set `ANSWER_PROVIDER=perplexity` and configure `PERPLEXITY_API_KEY` to use real Perplexity synthesis and claim verification. Production rejects the development provider. PubMed works without an API key; an NCBI email is recommended. Never commit `.env` or credentials.
 
 ## Configuration
 
 | Variable | Purpose |
 | --- | --- |
-| `PERPLEXITY_API_KEY` | Optional Perplexity Agent API credential |
+| `ANSWER_PROVIDER` | `dev` for deterministic extractive development/testing, or `perplexity` for real synthesis; defaults to `perplexity` |
+| `PERPLEXITY_API_KEY` | Required when `ANSWER_PROVIDER=perplexity`; also enables optional Perplexity retrieval |
 | `NCBI_API_KEY` | Optional NCBI E-utilities key for higher rate limits |
 | `NCBI_EMAIL` | Contact email sent to NCBI |
 | `APP_ENV` | Environment label, defaults to `development` |
@@ -47,6 +48,7 @@ uvicorn app.main:app --reload
 ```
 
 Interactive OpenAPI documentation is at `http://127.0.0.1:8000/docs`.
+The minimal local evidence-search page is at `http://127.0.0.1:8000/demo`.
 
 ## Endpoints
 
@@ -72,6 +74,8 @@ Persian request:
 {"query":"شواهد درباره درمان هلیکوباکتر پیلوری چیست؟","language":"fa","limit":10}
 ```
 
+The API detects Persian or English from the query text; the `language` field is retained for compatibility and is normalized to the detected language. Persian queries are Unicode-normalized and passed to the existing Perplexity integration for a concise, search-ready biomedical representation when `PERPLEXITY_API_KEY` is configured. PubMed and Europe PMC receive that representation through the shared search service. Without query-understanding configuration, Persian queries return an explicit abstention and are not sent untranslated to the literature providers. Retrieved titles and abstracts remain in their source language.
+
 Responses include the query, a conservative status, provider statuses, a medical-use disclaimer, and ranked evidence records with source IDs, publication metadata, and URLs. `/search` returns retrieved records without a synthesized recommendation. `/ask` can synthesize a cited informational response from those records; callers should review the source material directly. Provider failure is reflected in `provider_status` and does not prevent the remaining provider from returning results.
 
 Example response (truncated):
@@ -82,11 +86,15 @@ Example response (truncated):
   "language": "en",
   "answer": "Retrieved sources are listed below. This MVP does not generate a clinical recommendation; review the cited evidence directly.",
   "abstained": false,
+  "evidence_found": true,
+  "evidence_count": 1,
+  "abstention_reason": null,
   "uncertainty": "Evidence ranking is heuristic and has not been clinically validated.",
   "evidence": [
     {
       "source": "pubmed",
       "source_id": "12345678",
+      "citation_id": "pubmed:12345678",
       "title": "Example indexed evidence title",
       "abstract": null,
       "authors": [],
@@ -109,7 +117,7 @@ Example response (truncated):
 
 ### `POST /v1/medical/ask`
 
-This endpoint reuses the evidence retrieval service, then asks the configured answer provider to synthesize only from those retrieved records. Perplexity Agent API is currently the optional answer provider; it is called without search tools. If no answer provider is configured, the endpoint returns HTTP 503.
+This endpoint reuses the evidence retrieval service and configured answer and claim-verification providers. `ANSWER_PROVIDER=perplexity` uses the Perplexity Agent API without search tools and requires `PERPLEXITY_API_KEY`. `ANSWER_PROVIDER=dev` is restricted to development/test and returns only an exact matching abstract sentence, verified by an exact-text verifier; it does not generate clinical synthesis. With the default Perplexity selection and no key, the endpoint returns HTTP 503.
 
 Request:
 
@@ -117,7 +125,7 @@ Request:
 {"query":"What is the first-line treatment for GERD?","language":"en"}
 ```
 
-Persian requests use `"language":"fa"` and Persian query text.
+Persian questions are detected from their text and passed to the answer provider with Persian as the requested response language. The development provider remains extractive and may abstain if the retrieved evidence does not include a suitable Persian sentence; it does not translate evidence.
 
 Response:
 
@@ -176,8 +184,8 @@ python -m app.medical_agent "Find recent guidelines about asthma"
 - No automated claim-to-passage entailment verification, clinical conflict analysis, or validated grading methodology is implemented.
 - Conflicting evidence is not systematically detected; the answer flow does not establish consensus across retrieved sources.
 - `/search` returns evidence only; `/ask` produces informational synthesis but does not provide individualized treatment advice.
+- Persian search uses the configured Perplexity integration to prepare a search-ready query. Without that configuration, Persian evidence search abstains rather than querying with untranslated text. Query understanding and evidence ranking are not validated medical systems.
 - Claim support checks use an LLM and are not a validated medical fact-checking method; errors and low-confidence checks fail closed as uncertain.
-- Translation is limited to short response framing; it does not translate source records.
 - This service is not for emergencies or individual treatment decisions.
 
 ## Roadmap

@@ -1,6 +1,9 @@
+from contextlib import asynccontextmanager
+
 import pytest
 from mcp.types import CallToolResult, ListToolsResult, Tool
 
+import app.medical_agent as medical_agent
 from app.medical_agent import AgentResult, MedicalAgent, select_medical_tool
 from app.models.answer import AskResponse, ClaimVerification
 from app.models.evidence import EvidenceRecord, SearchResponse
@@ -202,3 +205,50 @@ def test_decision_policy_maps_nonmedical_search_and_synthesis_intents():
     assert select_medical_tool("What is the latest evidence about hypertension?") == "medical_search"
     assert select_medical_tool("Compare treatment options for asthma") == "medical_ask"
     assert select_medical_tool("Plan a weekend trip") is None
+
+
+@pytest.mark.asyncio
+async def test_agent_forwards_only_nonsecret_runtime_settings_to_mcp_child(monkeypatch):
+    captured = {}
+
+    class FakeServerParameters:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def initialize(self):
+            return None
+
+        async def list_tools(self):
+            return tool_definitions()
+
+        async def call_tool(self, name, arguments):
+            assert name == "medical_search"
+            return CallToolResult(
+                content=[],
+                structuredContent=search_response().model_dump(mode="json"),
+                isError=False,
+            )
+
+    @asynccontextmanager
+    async def fake_stdio_client(_server):
+        yield object(), object()
+
+    monkeypatch.setattr(medical_agent, "StdioServerParameters", FakeServerParameters)
+    monkeypatch.setattr(medical_agent, "stdio_client", fake_stdio_client)
+    monkeypatch.setattr(medical_agent, "ClientSession", lambda *_args: FakeSession())
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("ANSWER_PROVIDER", "dev")
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "test-secret-must-not-be-forwarded")
+    monkeypatch.setenv("NCBI_API_KEY", "test-secret-must-not-be-forwarded")
+
+    result = await medical_agent._run("Find recent guidelines about diabetes", "en")
+
+    assert result.status == "ok"
+    assert captured["env"] == {"APP_ENV": "test", "ANSWER_PROVIDER": "dev"}

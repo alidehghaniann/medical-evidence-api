@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Medical Evidence Search</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.6 system-ui, sans-serif; color: #17212b; background: #f4f7fa; }
+    body { max-width: 920px; margin: 2rem auto; padding: 0 1rem; }
+    header, form, .card, #status { background: white; border: 1px solid #d9e1e8; border-radius: 12px; padding: 1rem 1.25rem; }
+    header { margin-bottom: 1rem; } h1 { margin: 0 0 .25rem; font-size: 1.6rem; }
+    form { display: grid; gap: .8rem; grid-template-columns: 1fr auto; }
+    label { display: grid; gap: .3rem; } #query { grid-column: 1 / -1; }
+    input, select, button { font: inherit; padding: .65rem; border: 1px solid #aebbc7; border-radius: 7px; }
+    input { text-align: start; } button { background: #1459a6; color: white; border: 0; cursor: pointer; padding-inline: 1.2rem; }
+    button:disabled { opacity: .6; cursor: wait; }
+    #status { margin: 1rem 0; } #results { display: grid; gap: .8rem; }
+    .card h2 { margin: 0 0 .4rem; font-size: 1.1rem; } .meta { display: flex; flex-wrap: wrap; gap: .25rem .75rem; color: #4b5b69; font-size: .9rem; }
+    .abstract { white-space: pre-wrap; } a { color: #1459a6; }
+    [dir="rtl"] { text-align: right; }
+    [dir="ltr"] { text-align: left; }
+    bdi { unicode-bidi: isolate; }
+    @media (max-width: 600px) { form { grid-template-columns: 1fr; } #query { grid-column: auto; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Medical Evidence Search</h1>
+    <p>Search PubMed and Europe PMC records. This tool retrieves evidence; it does not provide diagnosis or treatment advice.</p>
+  </header>
+  <form id="search-form">
+    <label id="query-label" for="query">Medical question
+      <input id="query" name="query" dir="auto" minlength="3" maxlength="1000" required autocomplete="off" placeholder="Enter a medical question">
+    </label>
+    <label>Language
+      <select id="language" name="language"><option value="en">English</option><option value="fa">فارسی</option></select>
+    </label>
+    <button id="submit" type="submit">Search</button>
+  </form>
+  <div id="status" role="status" aria-live="polite" hidden></div>
+  <section id="results" aria-label="Evidence results"></section>
+  <script>
+    const form = document.querySelector('#search-form');
+    const language = document.querySelector('#language');
+    const query = document.querySelector('#query');
+    const statusBox = document.querySelector('#status');
+    const results = document.querySelector('#results');
+    const button = document.querySelector('#submit');
+    const words = {
+      en: { searching: 'Preparing query and searching PubMed and Europe PMC…', none: 'No sufficient evidence found.', found: n => `${n} evidence record(s) retrieved.`, error: 'Search failed. Please try again.', citation: 'Citation', year: 'Year', source: 'Source', journal: 'Journal', abstract: 'Abstract unavailable.', question: 'Question', detected: 'Detected language', evidenceOnly: 'Retrieved evidence; no clinical conclusion is implied.' },
+      fa: { searching: 'عبارت جست‌وجو آماده و در PubMed و Europe PMC جست‌وجو می‌شود…', none: 'شواهد کافی پیدا نشد.', found: n => `${n} مدرک بازیابی شد.`, error: 'جست‌وجو انجام نشد. دوباره تلاش کنید.', citation: 'شناسه استناد', year: 'سال', source: 'منبع', journal: 'نشریه', abstract: 'چکیده در دسترس نیست.', question: 'پرسش', detected: 'زبان شناسایی‌شده', evidenceOnly: 'شواهد بازیابی‌شده؛ این نتیجه‌گیری بالینی نیست.' }
+    };
+    function detectedLanguage(text) {
+      return /[\u0600-\u06ff]/.test(text) ? 'fa' : 'en';
+    }
+    function applyLanguage(lang) {
+      const fa = lang === 'fa';
+      document.documentElement.lang = lang;
+      document.documentElement.dir = fa ? 'rtl' : 'ltr';
+      document.querySelector('#query-label').firstChild.textContent = fa ? 'پرسش پزشکی' : 'Medical question';
+      query.placeholder = fa ? 'پرسش پزشکی خود را وارد کنید' : 'Enter a medical question';
+      button.textContent = fa ? 'جست‌وجو' : 'Search';
+    }
+    function addText(parent, tag, text, className, dir = 'auto') {
+      const element = document.createElement(tag);
+      element.dir = dir;
+      element.textContent = text || '';
+      if (className) element.className = className;
+      parent.append(element);
+      return element;
+    }
+    function addMeta(parent, label, value, dir = 'auto') {
+      const item = document.createElement('span');
+      item.append(document.createTextNode(`${label}: `));
+      const isolated = document.createElement('bdi');
+      isolated.dir = dir;
+      isolated.textContent = value || '';
+      item.append(isolated);
+      parent.append(item);
+    }
+    language.addEventListener('change', () => applyLanguage(language.value));
+    query.addEventListener('input', () => {
+      const lang = detectedLanguage(query.value);
+      language.value = lang;
+      applyLanguage(lang);
+    });
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const lang = detectedLanguage(query.value);
+      language.value = lang;
+      applyLanguage(lang);
+      const text = words[lang];
+      results.replaceChildren();
+      statusBox.hidden = false;
+      statusBox.textContent = text.searching;
+      button.disabled = true;
+      try {
+        const response = await fetch('/v1/medical/search', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: query.value, language: lang })
+        });
+        if (!response.ok) throw new Error('request failed');
+        const data = await response.json();
+        statusBox.textContent = data.abstained ? text.none : text.found(data.evidence_count);
+        if (data.abstention_reason) addText(statusBox, 'div', data.abstention_reason);
+        addText(results, 'h2', `${text.question}: ${data.query}`);
+        addText(results, 'p', `${text.detected}: ${data.language}. ${text.evidenceOnly}`);
+        addText(results, 'p', data.answer);
+        for (const item of data.evidence) {
+          const card = document.createElement('article'); card.className = 'card';
+          addText(card, 'h2', item.title);
+          const meta = document.createElement('div'); meta.className = 'meta'; meta.dir = 'auto';
+          addMeta(meta, text.source, item.source, 'ltr');
+          if (item.journal) addMeta(meta, text.journal, item.journal);
+          if (item.publication_year) addMeta(meta, text.year, String(item.publication_year), 'ltr');
+          addMeta(meta, text.citation, item.citation_id || item.source_id || '—', 'ltr');
+          card.append(meta);
+          addText(card, 'p', item.abstract || text.abstract, 'abstract');
+          const link = document.createElement('a'); link.href = item.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.dir = 'ltr'; link.textContent = item.url; card.append(link);
+          results.append(card);
+        }
+      } catch (_) {
+        statusBox.textContent = text.error;
+      } finally { button.disabled = false; }
+    });
+  </script>
+</body>
+</html>

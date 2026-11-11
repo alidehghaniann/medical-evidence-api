@@ -154,7 +154,7 @@ async def test_europepmc_mcp_tool_calls_shared_application_and_provider(monkeypa
     monkeypatch.setattr(mcp_server, "europepmc_provider_context", provider_context)
     response = await mcp_server.europepmc_search("Europe PMC asthma literature", "fa")
     assert response.evidence[0].source_id == "123"
-    assert response.language == "fa"
+    assert response.language == "en"
     assert response.provider_status == {"europepmc": "ok"}
     assert mcp_server.run_europepmc_search is medical_application.europepmc_search
 

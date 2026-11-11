@@ -1,13 +1,18 @@
+import logging
 import re
 
 from app.models.answer import AnswerCitation, AnswerResult, AskResponse, ClaimToVerify, ClaimVerification
 from app.models.evidence import SearchRequest, SearchResponse
+from app.models.medical_query import MedicalQuery
 from app.providers.answer_base import AnswerProvider
 from app.providers.claim_verifier_base import ClaimVerifier
 from app.providers.europepmc import EuropePMCProvider
 from app.providers.pubmed import PubMedProvider
 from app.services.citation_validation import InvalidCitationError, map_citations
 from app.services.search import MedicalSearchService
+from app.services.query_understanding import QueryUnderstander, understand_medical_query
+
+logger = logging.getLogger(__name__)
 
 
 class MedicalApplicationError(Exception):
@@ -23,55 +28,77 @@ async def medical_search(request: SearchRequest, service: MedicalSearchService) 
     return await service.search(request)
 
 
-async def pubmed_search(request: SearchRequest, provider: PubMedProvider) -> SearchResponse:
+async def pubmed_search(
+    request: SearchRequest,
+    provider: PubMedProvider,
+    query_understander: QueryUnderstander | None = None,
+) -> SearchResponse:
     """Return PubMed records through the existing normalized evidence schema."""
-    try:
-        records = await provider.search(request.query, request.limit)
-    except Exception as exc:
-        raise MedicalApplicationError(502, "PubMed provider failed.") from exc
-
-    found = bool(records)
-    return SearchResponse(
-        query=request.query,
-        language=request.language,
-        answer=(
-            "Retrieved PubMed records are listed below."
-            if found
-            else "No PubMed records matched the query."
-        ),
-        abstained=not found,
-        uncertainty=None if found else "PubMed returned no matching records.",
-        evidence=records,
-        provider_status={"pubmed": "ok" if found else "no_results"},
-        disclaimer=(
-            "PubMed metadata and abstracts are provided as research information; "
-            "this response does not provide diagnosis or treatment advice."
-        ),
-    )
+    return await _source_search(request, provider, "pubmed", "PubMed", query_understander)
 
 
-async def europepmc_search(request: SearchRequest, provider: EuropePMCProvider) -> SearchResponse:
+async def europepmc_search(
+    request: SearchRequest,
+    provider: EuropePMCProvider,
+    query_understander: QueryUnderstander | None = None,
+) -> SearchResponse:
     """Return Europe PMC records through the shared normalized evidence schema."""
+    return await _source_search(request, provider, "europepmc", "Europe PMC", query_understander)
+
+
+async def _source_search(
+    request: SearchRequest,
+    provider: PubMedProvider | EuropePMCProvider,
+    source: str,
+    display_name: str,
+    query_understander: QueryUnderstander | None,
+) -> SearchResponse:
+    query_understanding_failed = False
     try:
-        records = await provider.search(request.query, request.limit)
+        medical_query: MedicalQuery = await understand_medical_query(request.query, query_understander)
     except Exception as exc:
-        raise MedicalApplicationError(502, "Europe PMC provider failed.") from exc
+        logger.warning("medical query understanding failed error_type=%s", type(exc).__name__)
+        query_understanding_failed = True
+        medical_query = None
+
+    if medical_query is None or medical_query.search_query is None:
+        query_status = "unavailable" if query_understanding_failed else "not_configured"
+        return SearchResponse(
+            query=request.query,
+            language=request.language,
+            answer=("عبارت جست‌وجوی قابل اتکایی آماده نشد؛ جست‌وجو انجام نشد."
+                    if request.language == "fa" else "A reliable search query could not be prepared; no search was performed."),
+            abstained=True,
+            uncertainty="No safe search-ready representation was available.",
+            evidence=[],
+            provider_status={source: "skipped_query_understanding", "query_understanding": query_status},
+            abstention_reason="A reliable search-ready representation could not be prepared for this Persian query.",
+            disclaimer=(
+                f"{display_name} metadata and abstracts are provided as research information; "
+                "this response does not provide diagnosis or treatment advice."
+            ),
+        )
+
+    try:
+        records = await provider.search(medical_query.search_query, request.limit)
+    except Exception as exc:
+        logger.warning("medical evidence provider failed provider=%s error_type=%s", source, type(exc).__name__)
+        raise MedicalApplicationError(502, f"{display_name} provider failed.") from exc
 
     found = bool(records)
     return SearchResponse(
         query=request.query,
-        language=request.language,
+        language=medical_query.language,
         answer=(
-            "Retrieved Europe PMC records are listed below."
-            if found
-            else "No Europe PMC records matched the query."
+            f"Retrieved {display_name} records are listed below."
+            if found else f"No {display_name} records matched the query."
         ),
         abstained=not found,
-        uncertainty=None if found else "Europe PMC returned no matching records.",
+        uncertainty=None if found else f"{display_name} returned no matching records.",
         evidence=records,
-        provider_status={"europepmc": "ok" if found else "no_results"},
+        provider_status={source: "ok" if found else "no_results"},
         disclaimer=(
-            "Europe PMC metadata and abstracts are provided as research information; "
+            f"{display_name} metadata and abstracts are provided as research information; "
             "this response does not provide diagnosis or treatment advice."
         ),
     )
@@ -83,11 +110,14 @@ async def medical_ask(
     answer_provider: AnswerProvider,
     claim_verifier: ClaimVerifier,
 ) -> AskResponse:
+    logger.info("medical ask started")
     search_result = await service.search(request)
     statuses = search_result.provider_status
     if not statuses or all(status == "unavailable" for status in statuses.values()):
+        logger.warning("medical ask failed because all evidence providers are unavailable")
         raise MedicalApplicationError(503, "Evidence search providers are unavailable.")
     if search_result.abstained or not search_result.evidence:
+        logger.info("medical ask abstained stage=evidence")
         return abstention(request.language, len(search_result.evidence))
 
     try:
@@ -95,16 +125,26 @@ async def medical_ask(
             request.query, search_result.evidence, request.language
         )
     except Exception as exc:
+        logger.warning("medical answer provider failed error_type=%s", type(exc).__name__)
         raise MedicalApplicationError(502, "Answer provider failed.") from exc
+
+    logger.info(
+        "medical answer generated abstained=%s claim_count=%d",
+        result.abstained,
+        len(result.claims),
+    )
 
     try:
         citations = map_citations(result, search_result.evidence)
     except InvalidCitationError as exc:
+        logger.warning("medical answer citation validation failed")
         raise MedicalApplicationError(502, "Answer provider returned an invalid citation.") from exc
 
     if result.abstained or not result.answer.strip() or not result.claims or not citations:
+        logger.info("medical ask abstained stage=answer_validation")
         return abstention(request.language, len(search_result.evidence))
     if not answer_is_covered_by_claims(result.answer, [claim.text for claim in result.claims]):
+        logger.info("medical ask abstained stage=claim_coverage")
         return abstention(request.language, len(search_result.evidence))
 
     evidence_by_id = {
@@ -134,16 +174,28 @@ async def medical_ask(
                 if item.status == "supported" and item.confidence < 0.7 else item
                 for item in verified
             ])
-        except Exception:
+        except Exception as exc:
+            logger.warning("medical claim verifier failed error_type=%s", type(exc).__name__)
             verifications.extend(uncertain_verifications(cited_claims))
 
     if any(item.status != "supported" for item in verifications):
+        logger.info(
+            "medical claim verification completed supported=%d unsupported=%d uncertain=%d",
+            sum(item.status == "supported" for item in verifications),
+            sum(item.status == "unsupported" for item in verifications),
+            sum(item.status == "uncertain" for item in verifications),
+        )
+        logger.info("medical ask abstained stage=claim_verification")
         return abstention(
             request.language,
             len(search_result.evidence),
             citations=citations,
             claim_verifications=verifications,
         )
+    logger.info(
+        "medical claim verification completed supported=%d unsupported=0 uncertain=0",
+        len(verifications),
+    )
     confidence = min(result.confidence, *(item.confidence for item in verifications))
     return AskResponse(
         answer=render_verified_claims(claim_requests),

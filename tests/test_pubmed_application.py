@@ -40,7 +40,7 @@ async def test_pubmed_application_returns_normalized_structured_records():
     response = await pubmed_search(SearchRequest(query="asthma studies", language="fa"), provider)
 
     assert response.query == "asthma studies"
-    assert response.language == "fa"
+    assert response.language == "en"
     assert response.abstained is False
     assert response.provider_status == {"pubmed": "ok"}
     assert response.evidence[0].source_id == "456"
@@ -59,6 +59,21 @@ async def test_pubmed_application_returns_explicit_empty_result_without_fabricat
     assert response.evidence == []
     assert response.provider_status == {"pubmed": "no_results"}
     assert response.answer == "No PubMed records matched the query."
+
+
+@pytest.mark.asyncio
+async def test_pubmed_direct_tool_does_not_send_untranslated_persian_without_query_understanding():
+    provider = FakePubMedProvider([evidence_record()])
+    response = await pubmed_search(
+        SearchRequest(query="\u0641\u0634\u0627\u0631 \u062e\u0648\u0646 \u0628\u0627\u0644\u0627"),
+        provider,
+    )
+
+    assert provider.calls == []
+    assert response.language == "fa"
+    assert response.abstained is True
+    assert response.evidence == []
+    assert response.provider_status["pubmed"] == "skipped_query_understanding"
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 from app.core.config import Settings
 from app.providers.answer_base import AnswerProvider
 from app.providers.claim_verifier_base import ClaimVerifier
+from app.providers.dev_answer import DevAnswerProvider
+from app.providers.dev_claim_verifier import DevClaimVerifier
 from app.providers.europepmc import EuropePMCProvider
 from app.providers.perplexity import PerplexityProvider
 from app.providers.perplexity_answer import PerplexityAnswerProvider
@@ -19,10 +21,24 @@ async def search_service_context(settings: Settings) -> AsyncIterator[MedicalSea
     if settings.perplexity_api_key:
         providers.append(PerplexityProvider(settings))
     try:
-        yield MedicalSearchService(providers, settings)
+        async with query_understander_context(settings) as query_understander:
+            yield MedicalSearchService(providers, settings, query_understander=query_understander)
     finally:
         for provider in providers:
             await provider.close()
+
+
+@asynccontextmanager
+async def query_understander_context(settings: Settings) -> AsyncIterator[PerplexityAnswerProvider | None]:
+    """Reuse the configured Perplexity provider for language-aware query preparation."""
+    if not settings.perplexity_api_key:
+        yield None
+        return
+    provider = PerplexityAnswerProvider(settings)
+    try:
+        yield provider
+    finally:
+        await provider.close()
 
 
 @asynccontextmanager
@@ -45,6 +61,14 @@ async def europepmc_provider_context(settings: Settings) -> AsyncIterator[Europe
 
 @asynccontextmanager
 async def answer_provider_context(settings: Settings) -> AsyncIterator[AnswerProvider]:
+    if settings.answer_provider == "dev":
+        _require_development_environment(settings)
+        provider = DevAnswerProvider()
+        try:
+            yield provider
+        finally:
+            await provider.close()
+        return
     if not settings.perplexity_api_key:
         raise MedicalApplicationError(503, "No answer provider is configured.")
     provider = PerplexityAnswerProvider(settings)
@@ -56,6 +80,14 @@ async def answer_provider_context(settings: Settings) -> AsyncIterator[AnswerPro
 
 @asynccontextmanager
 async def claim_verifier_context(settings: Settings) -> AsyncIterator[ClaimVerifier]:
+    if settings.answer_provider == "dev":
+        _require_development_environment(settings)
+        verifier = DevClaimVerifier()
+        try:
+            yield verifier
+        finally:
+            await verifier.close()
+        return
     if not settings.perplexity_api_key:
         raise MedicalApplicationError(503, "No claim verifier is configured.")
     verifier = PerplexityClaimVerifier(settings)
@@ -63,3 +95,11 @@ async def claim_verifier_context(settings: Settings) -> AsyncIterator[ClaimVerif
         yield verifier
     finally:
         await verifier.close()
+
+
+def _require_development_environment(settings: Settings) -> None:
+    if settings.app_env.strip().casefold() not in {"development", "test"}:
+        raise MedicalApplicationError(
+            503,
+            "Development answer and verification providers are available only when APP_ENV is development or test.",
+        )

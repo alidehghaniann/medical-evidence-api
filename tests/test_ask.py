@@ -9,6 +9,7 @@ from app.core.config import Settings
 from app.main import app
 from app.models.answer import AnswerClaim, AnswerResult, ClaimVerification, ProviderCitation
 from app.models.evidence import EvidenceRecord
+from app.models.medical_query import SearchQueryRepresentation
 from app.providers.perplexity_answer import PerplexityAnswerProvider
 from app.services.search import MedicalSearchService
 
@@ -43,8 +44,10 @@ class FakeAnswerProvider:
             claims=[AnswerClaim(text="The supplied evidence describes the treatment.", citation_ids=["evidence-1"])],
         )
         self.fail = fail
+        self.calls = []
 
     async def answer(self, query, evidence, language):
+        self.calls.append((query, evidence, language))
         if self.fail:
             raise httpx.ConnectError("offline")
         return self.result
@@ -70,10 +73,20 @@ class FakeClaimVerifier:
         ) for claim in claims]
 
 
-def setup_client(records=None, answer_provider=None, search_fail=False, minimum_score=0.0, claim_verifier=None):
+class FakeQueryUnderstander:
+    async def understand_query(self, query, normalized_query):
+        return SearchQueryRepresentation(
+            search_query="metformin chronic kidney disease",
+            medical_terms=["metformin", "kidney", "disease"],
+            intent="general",
+        )
+
+
+def setup_client(records=None, answer_provider=None, search_fail=False, minimum_score=0.0, claim_verifier=None, query_understander=None):
     search_service = MedicalSearchService(
         [FakeSearchProvider(records, fail=search_fail)],
         Settings(minimum_evidence_score=minimum_score),
+        query_understander=query_understander,
     )
     app.dependency_overrides[get_service] = lambda: search_service
     if answer_provider is not None:
@@ -109,11 +122,17 @@ def test_ask_persian_answer_uses_requested_language():
     result = AnswerResult(answer="پاسخ بر اساس شواهد [evidence-1]", confidence=0.6,
         abstained=False, citations=[ProviderCitation(evidence_id="evidence-1")],
         claims=[AnswerClaim(text="پاسخ بر اساس شواهد", citation_ids=["evidence-1"])])
-    with setup_client([evidence_record()], FakeAnswerProvider(result)) as client:
-        response = client.post("/v1/medical/ask", json={"query": "سوال پزشکی", "language": "fa"})
+    evidence = evidence_record().model_copy(update={"title": "Metformin chronic kidney disease"})
+    answer_provider = FakeAnswerProvider(result)
+    with setup_client([evidence], answer_provider, query_understander=FakeQueryUnderstander()) as client:
+        response = client.post("/v1/medical/ask", json={
+            "query": "متفورمین در بیماری مزمن کلیه چیست؟",
+            "language": "en",
+        })
     clear_overrides()
     assert response.status_code == 200
     assert response.json()["language"] == "fa"
+    assert answer_provider.calls[0][2] == "fa"
     assert response.json()["answer"].startswith("پاسخ")
 
 
