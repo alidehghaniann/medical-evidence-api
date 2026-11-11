@@ -14,12 +14,12 @@ from pydantic import BaseModel
 from app.models.answer import AskResponse
 from app.models.evidence import SearchRequest, SearchResponse
 
-MedicalTool = Literal["medical_search", "medical_ask", "pubmed_search"]
+MedicalTool = Literal["medical_search", "medical_ask", "pubmed_search", "europepmc_search"]
 
 _MEDICAL_TERMS = re.compile(
     r"\b(?:medical|health|clinical|medicine|medicines|medication|medications|drug|drugs|"
     r"treatment|therapy|diagnosis|diagnose|symptom|symptoms|disease|condition|illness|"
-    r"patient|dose|dosage|side effect|adverse event|guideline|clinical trial|pubmed|"
+    r"patient|dose|dosage|side effect|adverse event|guideline|clinical trial|pubmed|europe[\s-]*pmc|"
     r"gerd|copd|hiv|aids|covid(?:-19)?|diabetes|hypertension|migraine|asthma|cancer|"
     r"pneumonia|influenza|hepatitis|ulcer|h\.?\s*pylori)\b|"
     r"پزشک|پزشکی|سلامت|درمان|دارو|علائم|بیماری|تشخیص|بالینی|شواهد|پژوهش|مقاله|راهنما|"
@@ -42,6 +42,7 @@ _PUBMED_INTENT = re.compile(
     r"\b(?:stud(?:y|ies)|research|papers?|pubmed|clinical trials?|recent literature|scientific evidence)\b",
     re.IGNORECASE,
 )
+_EUROPEPMC_INTENT = re.compile(r"\beurope[\s-]*pmc\b", re.IGNORECASE)
 
 
 class MCPToolClient(Protocol):
@@ -61,6 +62,8 @@ def select_medical_tool(question: str) -> MedicalTool | None:
     """Apply a small explicit policy; this function never generates an answer."""
     if not _MEDICAL_TERMS.search(question):
         return None
+    if _EUROPEPMC_INTENT.search(question):
+        return "europepmc_search"
     if _PUBMED_INTENT.search(question):
         return "pubmed_search"
     if _SYNTHESIS_INTENT.search(question):

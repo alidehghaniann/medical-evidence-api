@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from app.core.config import Settings
 from app.providers.answer_base import AnswerProvider
 from app.providers.claim_verifier_base import ClaimVerifier
+from app.providers.europepmc import EuropePMCProvider
 from app.providers.perplexity import PerplexityProvider
 from app.providers.perplexity_answer import PerplexityAnswerProvider
 from app.providers.perplexity_claim_verifier import PerplexityClaimVerifier
@@ -27,6 +28,15 @@ async def search_service_context(settings: Settings) -> AsyncIterator[MedicalSea
 @asynccontextmanager
 async def pubmed_provider_context(settings: Settings) -> AsyncIterator[PubMedProvider]:
     provider = PubMedProvider(settings)
+    try:
+        yield provider
+    finally:
+        await provider.close()
+
+
+@asynccontextmanager
+async def europepmc_provider_context(settings: Settings) -> AsyncIterator[EuropePMCProvider]:
+    provider = EuropePMCProvider(settings)
     try:
         yield provider
     finally:

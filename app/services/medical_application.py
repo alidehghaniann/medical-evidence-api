@@ -4,6 +4,7 @@ from app.models.answer import AnswerCitation, AnswerResult, AskResponse, ClaimTo
 from app.models.evidence import SearchRequest, SearchResponse
 from app.providers.answer_base import AnswerProvider
 from app.providers.claim_verifier_base import ClaimVerifier
+from app.providers.europepmc import EuropePMCProvider
 from app.providers.pubmed import PubMedProvider
 from app.services.citation_validation import InvalidCitationError, map_citations
 from app.services.search import MedicalSearchService
@@ -44,6 +45,33 @@ async def pubmed_search(request: SearchRequest, provider: PubMedProvider) -> Sea
         provider_status={"pubmed": "ok" if found else "no_results"},
         disclaimer=(
             "PubMed metadata and abstracts are provided as research information; "
+            "this response does not provide diagnosis or treatment advice."
+        ),
+    )
+
+
+async def europepmc_search(request: SearchRequest, provider: EuropePMCProvider) -> SearchResponse:
+    """Return Europe PMC records through the shared normalized evidence schema."""
+    try:
+        records = await provider.search(request.query, request.limit)
+    except Exception as exc:
+        raise MedicalApplicationError(502, "Europe PMC provider failed.") from exc
+
+    found = bool(records)
+    return SearchResponse(
+        query=request.query,
+        language=request.language,
+        answer=(
+            "Retrieved Europe PMC records are listed below."
+            if found
+            else "No Europe PMC records matched the query."
+        ),
+        abstained=not found,
+        uncertainty=None if found else "Europe PMC returned no matching records.",
+        evidence=records,
+        provider_status={"europepmc": "ok" if found else "no_results"},
+        disclaimer=(
+            "Europe PMC metadata and abstracts are provided as research information; "
             "this response does not provide diagnosis or treatment advice."
         ),
     )

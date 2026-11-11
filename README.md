@@ -7,6 +7,7 @@ An independent, modular service for retrieving medical literature and presenting
 ```text
 FastAPI routes -> search service -> provider interface
                                   |-> PubMed E-utilities
+                                  |-> Europe PMC REST API
                                   `-> optional Perplexity Agent API
        evidence normalization -> deduplication -> heuristic ranking -> citation checks
 ```
@@ -154,7 +155,7 @@ They cover health routes, validation, failure behavior, missing optional credent
 
 ## Local MCP server
 
-The local stdio MCP server exposes `medical_search`, `medical_ask`, and `pubmed_search` (`query`, optional `language`). The first two return typed results from the Medical Evidence Core; MCP does not bypass citation validation, claim verification, or abstention. `pubmed_search` uses NCBI E-utilities to retrieve PubMed metadata and abstracts. It does not download arbitrary full-text articles. Run the server from the repository root with:
+The local stdio MCP server exposes `medical_search`, `medical_ask`, `pubmed_search`, and `europepmc_search` (`query`, optional `language`). The first two return typed results from the Medical Evidence Core; MCP does not bypass citation validation, claim verification, or abstention. `pubmed_search` uses NCBI E-utilities, and `europepmc_search` uses the Europe PMC REST API. Both source tools return normalized publication metadata and abstracts without downloading arbitrary full-text articles. Run the server from the repository root with:
 
 ```powershell
 python -m app.mcp_server
@@ -162,7 +163,7 @@ python -m app.mcp_server
 
 ## Medical Agent
 
-The lightweight CLI routes explicit study, research, paper, PubMed, clinical trial, recent literature, and scientific evidence requests to `pubmed_search`; broader source discovery goes to `medical_search`, and synthesis questions go to `medical_ask`. It returns the selected tool's typed result unchanged, preserves abstention, and does not generate medical answers on its own. Clearly non-medical questions are declined without starting the MCP server. Example:
+The lightweight CLI routes explicit Europe PMC requests to `europepmc_search`; other explicit study, research, paper, PubMed, clinical trial, recent literature, and scientific evidence requests go to `pubmed_search`. Broader source discovery goes to `medical_search`, and synthesis questions go to `medical_ask`. It returns the selected tool's typed result unchanged, preserves abstention, and does not generate medical answers on its own. Clearly non-medical questions are declined without starting the MCP server. Example:
 
 ```powershell
 python -m app.medical_agent "Find recent guidelines about asthma"
@@ -170,7 +171,7 @@ python -m app.medical_agent "Find recent guidelines about asthma"
 
 ## Current limitations
 
-- PubMed search uses ESearch, ESummary, and EFetch; abstracts may be absent in PubMed records.
+- PubMed search uses ESearch, ESummary, and EFetch; abstracts may be absent in PubMed and Europe PMC records.
 - Perplexity search is broad web search and is not itself a medical authority. Source quality is exposed for caller review; it does not establish that a source supports any particular claim.
 - No automated claim-to-passage entailment verification, clinical conflict analysis, or validated grading methodology is implemented.
 - Conflicting evidence is not systematically detected; the answer flow does not establish consensus across retrieved sources.
@@ -181,7 +182,7 @@ python -m app.medical_agent "Find recent guidelines about asthma"
 
 ## Roadmap
 
-- **Phase 2:** Europe PMC, official guideline sources, stronger citation verification, question-specific ranking.
+- **Phase 2:** Official guideline sources, stronger citation verification, question-specific ranking.
 - **Phase 3:** PostgreSQL, Qdrant, document ingestion, source versioning, provenance tracking.
 - **Phase 4:** Medical knowledge graph, validated evidence grading, conflict detection, freshness monitoring.
 - **Phase 5:** Persian clinical interface, web application, Telegram and mobile clients, subscription API.

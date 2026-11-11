@@ -11,6 +11,7 @@ def tool_definitions():
         Tool(name="medical_search", inputSchema={"type": "object", "properties": {}}),
         Tool(name="medical_ask", inputSchema={"type": "object", "properties": {}}),
         Tool(name="pubmed_search", inputSchema={"type": "object", "properties": {}}),
+        Tool(name="europepmc_search", inputSchema={"type": "object", "properties": {}}),
     ])
 
 
@@ -112,6 +113,18 @@ async def test_pubmed_retrieval_intent_selects_pubmed_search(question):
     assert response.tool_name == "pubmed_search"
     assert isinstance(response.result, SearchResponse)
     assert client.tool_calls[0][0] == "pubmed_search"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_name", ["Europe PMC", "EuropePMC", "Europe-PMC"])
+async def test_europepmc_literature_request_selects_europepmc_tool(source_name):
+    client = FakeMCPClient(search_response())
+    response = await MedicalAgent(client).respond(
+        f"Search {source_name} for recent asthma literature"
+    )
+    assert response.tool_name == "europepmc_search"
+    assert isinstance(response.result, SearchResponse)
+    assert client.tool_calls[0][0] == "europepmc_search"
 
 
 @pytest.mark.asyncio

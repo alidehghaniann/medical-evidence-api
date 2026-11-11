@@ -105,10 +105,11 @@ def test_mcp_server_imports_and_publishes_typed_tools():
 
     tools = asyncio.run(inspect_tools())
     by_name = {tool.name: tool for tool in tools}
-    assert set(by_name) == {"medical_search", "medical_ask", "pubmed_search"}
+    assert set(by_name) == {"medical_search", "medical_ask", "pubmed_search", "europepmc_search"}
     assert by_name["medical_search"].inputSchema["properties"]["query"]["type"] == "string"
     assert "outputSchema" in by_name["medical_search"].model_dump(by_alias=True)
     assert by_name["pubmed_search"].inputSchema["properties"]["language"]["enum"] == ["en", "fa"]
+    assert by_name["europepmc_search"].inputSchema["properties"]["language"]["enum"] == ["en", "fa"]
 
 
 @pytest.mark.asyncio
@@ -136,6 +137,26 @@ async def test_pubmed_mcp_tool_calls_shared_application_and_provider(monkeypatch
     assert response.evidence[0].source_id == "123"
     assert response.provider_status == {"pubmed": "ok"}
     assert mcp_server.run_pubmed_search is medical_application.pubmed_search
+
+
+@pytest.mark.asyncio
+async def test_europepmc_mcp_tool_calls_shared_application_and_provider(monkeypatch):
+    class FakeEuropePMCProvider:
+        async def search(self, query, limit=10):
+            assert query == "Europe PMC asthma literature"
+            assert limit == 10
+            return [evidence_record()]
+
+    @asynccontextmanager
+    async def provider_context(_settings):
+        yield FakeEuropePMCProvider()
+
+    monkeypatch.setattr(mcp_server, "europepmc_provider_context", provider_context)
+    response = await mcp_server.europepmc_search("Europe PMC asthma literature", "fa")
+    assert response.evidence[0].source_id == "123"
+    assert response.language == "fa"
+    assert response.provider_status == {"europepmc": "ok"}
+    assert mcp_server.run_europepmc_search is medical_application.europepmc_search
 
 
 @pytest.mark.asyncio
