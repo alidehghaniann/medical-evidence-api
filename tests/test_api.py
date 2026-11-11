@@ -39,6 +39,12 @@ def test_health_and_root():
         assert client.get("/").json()["service"] == "Medical Evidence API"
 
 
+def test_medical_route_openapi_operation_ids_remain_stable():
+    paths = app.openapi()["paths"]
+    assert paths["/v1/medical/search"]["post"]["operationId"] == "medical_search_v1_medical_search_post"
+    assert paths["/v1/medical/ask"]["post"]["operationId"] == "medical_ask_v1_medical_ask_post"
+
+
 def test_request_validation():
     with client_with([FakeProvider()]) as client:
         assert client.post("/v1/medical/search", json={"query": "x", "language": "en"}).status_code == 422
