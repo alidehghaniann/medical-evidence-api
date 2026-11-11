@@ -164,6 +164,22 @@ pytest
 
 They cover health routes, validation, failure behavior, missing optional credentials, normalization, deduplication, ranking, citations, and abstention.
 
+## Retrieval evaluation benchmark
+
+The versioned dataset is `evaluation/medical_retrieval_v1.json` (22 English/Persian cases across 11 categories). Each case includes a stable ID, query, intent, expected concepts, and a relevance judgment map where available. Four English cases contain partial, manually verified PubMed PMID judgments; the remaining 18 cases are explicitly unjudged. Persian expected search representations are reference concepts for review, not relevance labels or guaranteed translations. No result is considered relevant from title keyword overlap alone.
+
+Run the evaluation only with explicit live opt-in:
+
+```powershell
+python -m app.evaluation --live
+```
+
+This calls the existing shared search service and its configured PubMed and Europe PMC providers. Reports are written to `evaluation/results/latest.json` and `evaluation/results/latest.md` (ignored by Git). Live requests are never run by pytest. English cases use the existing deterministic English query handling. Persian cases require the configured query-understanding provider; otherwise they are reported as failed/skipped without sending Persian text untranslated. No Perplexity answer API is used.
+
+Metrics use unique evidence identifiers, preferring PMID, then PMCID, then DOI. Duplicate identifiers are removed before taking the top K; unidentified records remain unjudged and occupy a top-K position. Precision@K is the fraction of explicitly judged retrieved items in the top K that have positive relevance; unjudged items are excluded from its denominator and judgment coverage is reported beside it. Recall@K is the retrieved known-relevant items divided by the known-relevant judgment set. F1@K is the harmonic mean of those values. MRR uses the first positive result among judged top-K results. nDCG@K uses graded relevance from 0 to 3, with unjudged documents excluded and judged ranks compressed. If a case has no relevance judgments, its metrics are null; if it has no known relevant documents, recall and nDCG are null. These partial-pool metrics are not estimates of relevance across the full literature.
+
+The report includes dataset version and timestamp, judged/unjudged case counts, macro-averaged overall/category/language metrics, provider status and source coverage, failures, missing known relevant identifiers, and ranking errors. Since judgments are partial and the public literature changes, compare results only alongside the same dataset version, code revision, cutoff K, and query-understanding configuration. This benchmark evaluates retrieval behavior only; it is not clinical validation.
+
 ## Local MCP server
 
 The local stdio MCP server exposes `medical_search`, `medical_ask`, `pubmed_search`, and `europepmc_search` (`query`, optional `language`). The first two return typed results from the Medical Evidence Core; MCP does not bypass citation validation, claim verification, or abstention. `pubmed_search` uses NCBI E-utilities, and `europepmc_search` uses the Europe PMC REST API. Both source tools return normalized publication metadata and abstracts without downloading arbitrary full-text articles. Run the server from the repository root with:
