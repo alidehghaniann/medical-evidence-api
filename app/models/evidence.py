@@ -3,6 +3,18 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 from app.models.medical_query import detect_query_language
 
 
+class EvidenceAssessment(BaseModel):
+    """Transparent baseline assessment; values are not clinically validated."""
+
+    evidence_type: str | None = None
+    evidence_strength: str = "unknown"
+    source_authority: float | None = None
+    recency: float | None = None
+    guideline_priority: bool | None = None
+    assessment_confidence: float = 0.0
+    assessment_reasons: list[str] = Field(default_factory=list)
+
+
 class EvidenceRecord(BaseModel):
     """A normalized record with source provenance retained."""
 
@@ -24,6 +36,7 @@ class EvidenceRecord(BaseModel):
     authority_score: float = 0.0
     recency_score: float = 0.0
     rank_score: float = 0.0
+    assessment: EvidenceAssessment = Field(default_factory=EvidenceAssessment)
 
     @model_validator(mode="after")
     def set_citation_id(self):

@@ -1,4 +1,4 @@
-from app.evidence.processing import deduplicate, normalize_record, rank_records, validate_citations
+from app.evidence.processing import assess_evidence, deduplicate, normalize_record, rank_records, validate_citations
 from app.models.evidence import EvidenceRecord
 
 
@@ -18,6 +18,19 @@ def test_normalize_and_classify_evidence():
     assert item.doi == "10.1000/test"
     assert item.authors == ["A Smith"]
     assert item.evidence_type == "randomized_trial"
+    assert item.assessment.evidence_strength == "moderate"
+    assert item.assessment.source_authority == 0.55
+    assert item.assessment.recency is not None
+    assert item.assessment.assessment_reasons
+
+
+def test_assessment_preserves_unknown_values_instead_of_inventing_them():
+    item = record(source="future-source", evidence_type=None, publication_year=None)
+    assessment = assess_evidence(item)
+    assert assessment.evidence_strength == "unknown"
+    assert assessment.source_authority is None
+    assert assessment.recency is None
+    assert assessment.guideline_priority is None
 
 
 def test_duplicate_removal_by_pmid_doi_and_near_title():

@@ -8,6 +8,7 @@ from app.models.evidence import SearchRequest, SearchResponse
 from app.models.medical_query import detect_query_language
 from app.providers.base import EvidenceProvider
 from app.services.query_understanding import QueryUnderstander, understand_medical_query
+from app.services.source_router import SourceRouter
 
 DISCLAIMER = "This service provides research information, not diagnosis or treatment. It is not a validated clinical decision support system. Consult a qualified clinician."
 logger = logging.getLogger(__name__)
@@ -18,10 +19,12 @@ class MedicalSearchService:
         providers: list[EvidenceProvider],
         settings: Settings,
         query_understander: QueryUnderstander | None = None,
+        source_router: SourceRouter | None = None,
     ):
         self.providers = providers
         self.settings = settings
         self.query_understander = query_understander
+        self.source_router = source_router or SourceRouter()
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         limit = min(request.limit, self.settings.max_search_results)
@@ -34,13 +37,14 @@ class MedicalSearchService:
             logger.warning("medical query understanding failed error_type=%s", type(exc).__name__)
             query_error = True
             medical_query = None
+        route = self.source_router.route(self.providers) if medical_query is not None else None
         searchable = medical_query is not None and medical_query.search_query is not None
         if searchable:
             provider_query = medical_query.search_query
             ranking_query = provider_query
-            for provider in self.providers:
+            for provider in route.providers:
                 logger.debug("medical evidence provider called provider=%s", provider.name)
-            calls = [provider.search(provider_query, limit) for provider in self.providers]
+            calls = [provider.search(provider_query, limit) for provider in route.providers]
             results = await asyncio.gather(*calls, return_exceptions=True)
         else:
             results = [[] for _ in self.providers]
@@ -50,7 +54,8 @@ class MedicalSearchService:
                 "ok" if searchable else "not_configured"
             )
         records = []
-        for provider, result in zip(self.providers, results):
+        routed_providers = route.providers if route else tuple(self.providers)
+        for provider, result in zip(routed_providers, results):
             if not searchable:
                 statuses[provider.name] = "skipped_query_understanding"
                 continue
@@ -65,7 +70,8 @@ class MedicalSearchService:
                 statuses[provider.name] = "ok" if result else "no_results"
                 records.extend(result)
         ranking_query = ranking_query if searchable else ""
-        ranked = rank_records(deduplicate(records), ranking_query)[:limit]
+        normalized_candidates = deduplicate(records)
+        ranked = rank_records(normalized_candidates, ranking_query)[:limit]
         topic_match = searchable and has_topic_match(ranking_query, ranked)
         if ranked and not topic_match:
             # Providers can return broad fallback hits for unusual terms. Do

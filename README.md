@@ -5,12 +5,20 @@ An independent, modular service for retrieving medical literature and presenting
 ## Architecture
 
 ```text
-FastAPI routes -> search service -> provider interface
-                                  |-> PubMed E-utilities
-                                  |-> Europe PMC REST API
-                                  `-> optional Perplexity Agent API
-       evidence normalization -> deduplication -> heuristic ranking -> citation checks
+Question
+  -> Query Understanding (validated MedicalQuery; fail closed for Persian)
+  -> Source Router (deterministic; configured providers)
+  -> Shared Retrieval (PubMed + Europe PMC; optional Perplexity search)
+  -> Normalization and deduplication (EvidenceRecord)
+  -> Evidence Assessment (transparent baseline, explicit unknowns)
+  -> Ranking (relevance-led deterministic score)
+  -> SearchResponse
+  -> Clinical Synthesis (configured AnswerProvider; ask only)
+  -> Claim and Citation Verification
+  -> Answer or Abstain (application policy)
 ```
+
+REST, MCP, and the CLI agent use the same `MedicalSearchService` and medical application functions. Search stops at ranked evidence. Ask continues through the existing answer provider, citation mapping, claim coverage checks, and claim verifier; any unsupported or uncertain claim fails closed to abstention. Evidence assessment, source authority, recency, and ranking are engineering baselines, not clinically validated assessment methods. The assessment is not GRADE, statistical appraisal, or risk-of-bias assessment.
 
 Providers implement shared asynchronous interfaces and can fail independently. PubMed uses NCBI E-utilities; the optional Perplexity search provider is enabled when `PERPLEXITY_API_KEY` is configured. Perplexity is also the real answer and claim-verification provider when `ANSWER_PROVIDER=perplexity`. The development-only provider returns an exact sentence from matching retrieved abstract evidence and uses an exact-text verifier; it does not synthesize, translate, browse, or add medical knowledge. The evidence rank is a transparent heuristic, not a validated evidence-grading system.
 
