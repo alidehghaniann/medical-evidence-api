@@ -39,6 +39,48 @@ def test_health_and_root():
         assert client.get("/").json()["service"] == "Medical Evidence API"
 
 
+def test_diagnostics_reports_configuration_without_secrets():
+    from app.api.routes import get_settings
+
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        app_env="development", answer_provider="dev", ollama_model="local-model",
+        perplexity_api_key="must-not-leak",
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get("/diagnostics")
+        assert response.status_code == 200
+        assert response.json() == {
+            "api": "ok",
+            "providers": {
+                "pubmed": "configured",
+                "europepmc": "configured",
+                "query_understanding": {"provider": "ollama", "status": "configured"},
+                "answer": {"provider": "dev", "status": "configured", "development_only": True},
+            },
+        }
+        assert "must-not-leak" not in response.text
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_diagnostics_marks_missing_query_and_answer_configuration():
+    from app.api.routes import get_settings
+
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        app_env="production", query_understanding_provider="ollama", answer_provider="perplexity",
+    )
+    try:
+        with TestClient(app) as client:
+            body = client.get("/diagnostics").json()
+        assert body["providers"]["query_understanding"] == {"provider": "ollama", "status": "not_configured"}
+        assert body["providers"]["answer"] == {
+            "provider": "perplexity", "status": "not_configured", "development_only": False,
+        }
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_medical_route_openapi_operation_ids_remain_stable():
     paths = app.openapi()["paths"]
     assert paths["/v1/medical/search"]["post"]["operationId"] == "medical_search_v1_medical_search_post"

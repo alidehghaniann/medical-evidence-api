@@ -110,6 +110,12 @@ async def test_provider_selection_defaults_by_environment_and_perplexity_remains
         assert isinstance(provider, PerplexityAnswerProvider)
 
 
+@pytest.mark.asyncio
+async def test_ollama_selection_without_model_is_reported_as_not_configured():
+    async with query_understander_context(Settings(app_env="development", ollama_model=None)) as provider:
+        assert provider is None
+
+
 def test_query_understanding_provider_environment_configuration(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("QUERY_UNDERSTANDING_PROVIDER", "ollama")

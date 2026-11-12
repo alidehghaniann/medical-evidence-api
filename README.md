@@ -52,6 +52,8 @@ The sample `.env` selects `ANSWER_PROVIDER=dev` and `QUERY_UNDERSTANDING_PROVIDE
 | `MAX_SEARCH_RESULTS` | Configured result ceiling |
 | `MINIMUM_EVIDENCE_SCORE` | Abstention threshold, defaults to 0.25 |
 
+The default Python settings are validated and local-safe. A missing `OLLAMA_MODEL` means Persian search is reported as `query_understanding: not_configured`; it is never sent untranslated to literature providers. `/diagnostics` reports local configuration only and does not make network calls. `configured` means credentials/settings are present, not that an upstream service is reachable. Use `/health` for the lightweight process check.
+
 ## Run
 
 ```powershell
@@ -70,6 +72,10 @@ Returns service name, status, and docs location.
 ### `GET /health`
 
 Returns `{"status":"ok"}` when the API process is responsive. It does not check upstream provider health.
+
+### `GET /diagnostics`
+
+Returns process status and non-secret provider configuration states. PubMed and Europe PMC need no credentials for basic retrieval. Query understanding and answer configuration are reported separately; a configured state does not guarantee network reachability or model availability.
 
 ### `POST /v1/medical/search`
 

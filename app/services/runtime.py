@@ -34,6 +34,9 @@ async def search_service_context(settings: Settings) -> AsyncIterator[MedicalSea
 async def query_understander_context(settings: Settings) -> AsyncIterator[QueryUnderstander | None]:
     """Select the configured local or hosted query-understanding provider."""
     if settings.effective_query_understanding_provider == "ollama":
+        if not settings.ollama_model or not settings.ollama_model.strip():
+            yield None
+            return
         provider = OllamaQueryUnderstandingProvider(settings)
     else:
         if not settings.perplexity_api_key:

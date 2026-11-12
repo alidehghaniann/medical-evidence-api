@@ -48,6 +48,34 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/diagnostics")
+async def diagnostics(settings: Settings = Depends(get_settings)) -> dict[str, object]:
+    """Report local provider configuration without making network calls or exposing secrets."""
+    query_provider = settings.effective_query_understanding_provider
+    if query_provider == "ollama":
+        query_status = "configured" if settings.ollama_model and settings.ollama_model.strip() else "not_configured"
+    else:
+        query_status = "configured" if settings.perplexity_api_key else "not_configured"
+
+    answer_status = "configured" if settings.answer_provider == "dev" or settings.perplexity_api_key else "not_configured"
+    return {
+        "api": "ok",
+        "providers": {
+            "pubmed": "configured",
+            "europepmc": "configured",
+            "query_understanding": {
+                "provider": query_provider,
+                "status": query_status,
+            },
+            "answer": {
+                "provider": settings.answer_provider,
+                "status": answer_status,
+                "development_only": settings.answer_provider == "dev",
+            },
+        },
+    }
+
+
 @router.get("/demo", include_in_schema=False)
 async def demo_page() -> FileResponse:
     return FileResponse(DEMO_PAGE, media_type="text/html; charset=utf-8")

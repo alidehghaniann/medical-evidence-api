@@ -90,6 +90,26 @@ async def test_europepmc_http_failure_is_a_controlled_provider_error():
 
 
 @pytest.mark.asyncio
+async def test_europepmc_retries_a_timeout_then_returns_results():
+    requests = 0
+
+    def handler(_request):
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            raise httpx.ReadTimeout("temporary timeout")
+        return httpx.Response(200, json={"hitCount": 0, "resultList": {"result": []}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = EuropePMCProvider(Settings(), client=client)
+    try:
+        assert await provider.search("asthma research") == []
+        assert requests == 2
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_europepmc_malformed_payload_fails_and_incomplete_items_are_skipped():
     malformed_client = httpx.AsyncClient(transport=httpx.MockTransport(
         lambda _request: httpx.Response(200, json={"hitCount": 1})
