@@ -116,6 +116,12 @@ async def test_ollama_selection_without_model_is_reported_as_not_configured():
         assert provider is None
 
 
+@pytest.mark.asyncio
+async def test_perplexity_selection_without_key_is_reported_as_not_configured():
+    async with query_understander_context(Settings(query_understanding_provider="perplexity")) as provider:
+        assert provider is None
+
+
 def test_query_understanding_provider_environment_configuration(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("QUERY_UNDERSTANDING_PROVIDER", "ollama")

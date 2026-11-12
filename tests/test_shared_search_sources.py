@@ -47,6 +47,14 @@ def install_fake_providers(monkeypatch, pubmed, europepmc):
 
 
 @pytest.mark.asyncio
+async def test_configured_perplexity_is_not_added_as_an_evidence_source():
+    settings = Settings(perplexity_api_key="test-key", query_understanding_provider="perplexity")
+    async with runtime.search_service_context(settings) as service:
+        assert [provider.name for provider in service.providers] == ["pubmed", "europepmc"]
+        assert service.query_understander is not None
+
+
+@pytest.mark.asyncio
 async def test_medical_search_queries_both_sources_and_combines_deduplicated_evidence(monkeypatch):
     shared_pubmed = record("pubmed", "100", "Asthma treatment study", "10.1000/shared")
     shared_europepmc = record("europepmc", "100", "Asthma treatment study", "10.1000/shared")

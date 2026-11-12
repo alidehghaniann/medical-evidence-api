@@ -8,7 +8,6 @@ from app.providers.dev_answer import DevAnswerProvider
 from app.providers.dev_claim_verifier import DevClaimVerifier
 from app.providers.europepmc import EuropePMCProvider
 from app.providers.ollama_query_understanding import OllamaQueryUnderstandingProvider
-from app.providers.perplexity import PerplexityProvider
 from app.providers.perplexity_answer import PerplexityAnswerProvider
 from app.providers.perplexity_claim_verifier import PerplexityClaimVerifier
 from app.providers.pubmed import PubMedProvider
@@ -20,8 +19,6 @@ from app.services.search import MedicalSearchService
 @asynccontextmanager
 async def search_service_context(settings: Settings) -> AsyncIterator[MedicalSearchService]:
     providers = [PubMedProvider(settings), EuropePMCProvider(settings)]
-    if settings.perplexity_api_key:
-        providers.append(PerplexityProvider(settings))
     try:
         async with query_understander_context(settings) as query_understander:
             yield MedicalSearchService(providers, settings, query_understander=query_understander)

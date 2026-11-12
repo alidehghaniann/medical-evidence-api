@@ -82,3 +82,27 @@ def test_malformed_or_unfaithful_query_representation_is_rejected(search_query, 
             await client.aclose()
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("failure", ["unauthorized", "timeout", "malformed"])
+def test_perplexity_query_understanding_fails_closed_without_leaking_key(failure):
+    secret = "test-secret-that-must-not-leak"
+
+    def handler(_request):
+        if failure == "unauthorized":
+            return httpx.Response(401, json={"error": "invalid key"})
+        if failure == "timeout":
+            raise httpx.ReadTimeout("upstream timeout")
+        return httpx.Response(200, json={"output": []})
+
+    async def exercise():
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        provider = PerplexityAnswerProvider(Settings(perplexity_api_key=secret), client=client)
+        try:
+            with pytest.raises((httpx.HTTPStatusError, httpx.ReadTimeout, ValueError)) as error:
+                await provider.understand_query("\u0641\u0634\u0627\u0631 \u062e\u0648\u0646", "normalized")
+            assert secret not in str(error.value)
+        finally:
+            await client.aclose()
+
+    asyncio.run(exercise())
