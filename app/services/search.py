@@ -4,7 +4,7 @@ import re
 
 from app.core.config import Settings
 from app.evidence.processing import deduplicate, rank_records, validate_citations
-from app.models.evidence import SearchRequest, SearchResponse
+from app.models.evidence import SearchPipelineDiagnostics, SearchRequest, SearchResponse
 from app.models.medical_query import detect_query_language
 from app.providers.base import EvidenceProvider
 from app.services.query_understanding import QueryUnderstander, understand_medical_query
@@ -39,6 +39,10 @@ class MedicalSearchService:
             medical_query = None
         route = self.source_router.route(self.providers) if medical_query is not None else None
         searchable = medical_query is not None and medical_query.search_query is not None
+        query_provider = "deterministic" if language == "en" else (
+            getattr(self.query_understander, "name", type(self.query_understander).__name__.replace("Provider", "").casefold())
+            if self.query_understander is not None else "not_configured"
+        )
         if searchable:
             provider_query = medical_query.search_query
             ranking_query = provider_query
@@ -54,8 +58,10 @@ class MedicalSearchService:
                 "ok" if searchable else "not_configured"
             )
         records = []
+        retrieved_by_provider: dict[str, int] = {}
         routed_providers = route.providers if route else tuple(self.providers)
         for provider, result in zip(routed_providers, results):
+            retrieved_by_provider[provider.name] = 0
             if not searchable:
                 statuses[provider.name] = "skipped_query_understanding"
                 continue
@@ -68,10 +74,12 @@ class MedicalSearchService:
                 )
             else:
                 statuses[provider.name] = "ok" if result else "no_results"
+                retrieved_by_provider[provider.name] = len(result)
                 records.extend(result)
         ranking_query = ranking_query if searchable else ""
         normalized_candidates = deduplicate(records)
-        ranked = rank_records(normalized_candidates, ranking_query)[:limit]
+        ranked_candidates = rank_records(normalized_candidates, ranking_query)
+        ranked = ranked_candidates[:limit]
         topic_match = searchable and has_topic_match(ranking_query, ranked)
         if ranked and not topic_match:
             # Providers can return broad fallback hits for unusual terms. Do
@@ -105,9 +113,24 @@ class MedicalSearchService:
             abstention_reason = "Retrieved records did not pass citation validation."
         else:
             abstention_reason = "Retrieved evidence did not meet the minimum quality threshold."
+        query_status = statuses.get("query_understanding", "ok" if language == "en" else "not_configured")
+        diagnostics = SearchPipelineDiagnostics(
+            query_understanding_provider=query_provider,
+            query_understanding_status=query_status,
+            intent=medical_query.intent if medical_query is not None else None,
+            medical_terms_count=len(medical_query.medical_terms) if medical_query is not None else 0,
+            provider_status=statuses.copy(),
+            retrieved_by_provider=retrieved_by_provider,
+            retrieved_count=len(records),
+            normalized_count=len(records),
+            deduplicated_count=len(normalized_candidates),
+            ranked_count=len(ranked_candidates),
+            evidence_assessed_count=sum(bool(item.assessment.assessment_reasons) for item in ranked_candidates),
+        )
         response = SearchResponse(query=request.query, language=language, answer=answer,
             abstained=not sufficient, uncertainty=uncertainty, evidence=ranked,
-            abstention_reason=abstention_reason, provider_status=statuses, disclaimer=DISCLAIMER)
+            abstention_reason=abstention_reason, provider_status=statuses, disclaimer=DISCLAIMER,
+            pipeline_diagnostics=diagnostics)
         if response.abstained:
             logger.info("medical evidence search abstained")
         logger.info(

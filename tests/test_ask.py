@@ -1,8 +1,10 @@
 import json
+import logging
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.api.routes import get_answer_provider, get_claim_verifier, get_service
 from app.core.config import Settings
@@ -116,6 +118,11 @@ def test_ask_english_success_and_response_schema():
     assert body["abstained"] is False
     assert body["evidence_count"] == 1
     assert body["claim_verifications"][0]["status"] == "supported"
+    assert body["diagnostics"]["reason_code"] is None
+    assert body["diagnostics"]["stages"]["answer_provider_execution"] == "succeeded"
+    assert body["diagnostics"]["stages"]["claim_verification"] == "completed"
+    assert body["diagnostics"]["counts"]["claims_extracted"] == 1
+    assert body["diagnostics"]["counts"]["supported_claims"] == 1
 
 
 def test_ask_persian_answer_uses_requested_language():
@@ -146,13 +153,46 @@ def test_insufficient_evidence_abstains_without_calling_answer_provider():
     assert response.json()["confidence"] == 0.0
     assert response.json()["citations"] == []
     assert response.json()["evidence_count"] == 0
+    assert response.json()["diagnostics"]["reason_code"] == "no_evidence"
+    assert response.json()["diagnostics"]["stages"]["answer_provider_execution"] == "not_started"
 
 
-def test_answer_provider_failure_is_controlled_error():
-    with setup_client([evidence_record()], FakeAnswerProvider(fail=True)) as client:
+def test_retrieval_success_but_search_policy_rejects_answer_provider_is_not_invoked():
+    provider = FakeAnswerProvider()
+    with setup_client([evidence_record()], provider, minimum_score=1.0) as client:
+        response = client.post("/v1/medical/ask", json={"query": "treatment evidence"})
+    clear_overrides()
+    body = response.json()
+    assert body["abstained"] is True
+    assert body["evidence_count"] == 1
+    assert provider.calls == []
+    assert body["diagnostics"]["reason_code"] == "insufficient_evidence"
+    assert body["diagnostics"]["stages"]["answer_provider_execution"] == "not_started"
+
+
+def test_answer_provider_failure_is_controlled_error(caplog):
+    caplog.set_level(logging.INFO, logger="app.services.medical_application")
+    provider = FakeAnswerProvider(fail=True)
+    with setup_client([evidence_record()], provider) as client:
         response = client.post("/v1/medical/ask", json={"query": "treatment evidence"})
     clear_overrides()
     assert response.status_code == 502
+    assert len(provider.calls) == 1
+    assert "reason_code=answer_provider_failed" in caplog.text
+
+
+def test_answer_parse_failure_is_classified_and_fails_closed(caplog):
+    caplog.set_level(logging.INFO, logger="app.services.medical_application")
+    class InvalidAnswerProvider(FakeAnswerProvider):
+        async def answer(self, query, evidence, language):
+            self.calls.append((query, evidence, language))
+            raise ValueError("invalid structured answer")
+
+    with setup_client([evidence_record()], InvalidAnswerProvider()) as client:
+        response = client.post("/v1/medical/ask", json={"query": "treatment evidence"})
+    clear_overrides()
+    assert response.status_code == 502
+    assert "reason_code=answer_parse_failed" in caplog.text
 
 
 def test_search_provider_failure_is_controlled_error():
@@ -162,7 +202,8 @@ def test_search_provider_failure_is_controlled_error():
     assert response.status_code == 503
 
 
-def test_unknown_citation_is_rejected():
+def test_unknown_citation_is_rejected(caplog):
+    caplog.set_level(logging.INFO, logger="app.services.medical_application")
     result = AnswerResult(answer="An answer [evidence-999]", confidence=0.8, abstained=False,
         citations=[ProviderCitation(evidence_id="evidence-999")],
         claims=[AnswerClaim(text="An answer", citation_ids=["evidence-999"])])
@@ -170,7 +211,9 @@ def test_unknown_citation_is_rejected():
         response = client.post("/v1/medical/ask", json={"query": "treatment evidence"})
     clear_overrides()
     assert response.status_code == 502
-    assert "invalid citation" in response.json()["detail"]
+    assert response.json()["detail"]["reason_code"] == "citation_mapping_failed"
+    assert "invalid citation" in response.json()["detail"]["message"]
+    assert "reason_code=citation_mapping_failed" in caplog.text
 
 
 def test_extra_factual_answer_statement_not_in_claims_abstains():
@@ -181,12 +224,17 @@ def test_extra_factual_answer_statement_not_in_claims_abstains():
         citations=[ProviderCitation(evidence_id="evidence-1")],
         claims=[AnswerClaim(text="Drug X is effective", citation_ids=["evidence-1"])],
     )
-    with setup_client([evidence_record()], FakeAnswerProvider(result)) as client:
+    verifier = FakeClaimVerifier()
+    with setup_client([evidence_record()], FakeAnswerProvider(result), claim_verifier=verifier) as client:
         response = client.post("/v1/medical/ask", json={"query": "treatment evidence"})
     clear_overrides()
     assert response.status_code == 200
     assert response.json()["abstained"] is True
     assert "reduces mortality" not in response.json()["answer"]
+    assert response.json()["diagnostics"]["reason_code"] == "claim_coverage_failed"
+    assert response.json()["diagnostics"]["counts"]["answer_sentences"] == 2
+    assert response.json()["diagnostics"]["counts"]["covered_answer_sentences"] == 1
+    assert verifier.calls == 0
 
 
 def test_claim_without_citation_abstains():
@@ -224,6 +272,8 @@ def test_unsupported_or_uncertain_claim_abstains(status):
     assert response.json()["abstained"] is True
     assert response.json()["answer"] == "Insufficient evidence was retrieved to provide a reliable answer."
     assert response.json()["claim_verifications"][0]["status"] == status
+    assert response.json()["diagnostics"]["reason_code"] == f"{status}_claims"
+    assert response.json()["diagnostics"]["stages"]["claim_verification"] == "completed"
 
 
 def test_multiple_claims_with_mixed_support_abstain_and_preserve_audit():
@@ -261,6 +311,8 @@ def test_verifier_failure_fails_closed_as_uncertain():
     assert response.status_code == 200
     assert response.json()["abstained"] is True
     assert response.json()["claim_verifications"][0]["status"] == "uncertain"
+    assert response.json()["diagnostics"]["reason_code"] == "claim_verification_failed"
+    assert response.json()["diagnostics"]["stages"]["claim_verification"] == "failed"
 
 
 def test_low_verifier_confidence_is_downgraded_to_uncertain():
@@ -291,6 +343,7 @@ def test_ask_without_configured_answer_provider_returns_controlled_error():
         response = client.post("/v1/medical/ask", json={"query": "treatment evidence"})
     clear_overrides()
     assert response.status_code == 503
+    assert response.json()["detail"]["reason_code"] == "answer_provider_not_configured"
 
 
 @pytest.mark.asyncio
@@ -311,3 +364,18 @@ async def test_perplexity_answer_provider_is_grounded_only_in_input_evidence():
     result = await provider.answer("question", [evidence_record()], "en")
     assert result.citations[0].evidence_id == "evidence-1"
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_perplexity_successful_http_with_malformed_answer_is_rejected():
+    client = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda _request: httpx.Response(200, json={"output": [{"type": "message", "content": [{
+            "type": "output_text", "text": "not valid answer JSON",
+        }]}]})
+    ))
+    provider = PerplexityAnswerProvider(Settings(perplexity_api_key="test-key"), client=client)
+    try:
+        with pytest.raises(ValidationError):
+            await provider.answer("question", [evidence_record()], "en")
+    finally:
+        await client.aclose()

@@ -25,6 +25,7 @@ class _VerificationResponse(BaseModel):
 class PerplexityClaimVerifier(ClaimVerifier):
     """Batched claim checking using only the evidence cited for each claim."""
 
+    name = "perplexity"
     endpoint = "https://api.perplexity.ai/v1/agent"
 
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None):

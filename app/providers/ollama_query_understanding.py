@@ -10,6 +10,8 @@ from app.models.medical_query import MedicalQuery, SearchQueryRepresentation
 class OllamaQueryUnderstandingProvider:
     """Local Ollama implementation for development-time medical query preparation."""
 
+    name = "ollama"
+
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None):
         self.base_url = settings.ollama_base_url.rstrip("/")
         self.model = settings.ollama_model

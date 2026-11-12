@@ -84,6 +84,13 @@ def test_search_returns_combined_normalized_source_metadata_and_schema():
         assert item["source_id"] and item["citation_id"] == f"{item['source']}:{item['source_id']}"
         assert item["url"] and item["journal"]
         assert payload["provider_status"] == {"pubmed": "ok", "europepmc": "ok"}
+        diagnostics = payload["pipeline_diagnostics"]
+        assert diagnostics["query_understanding_provider"] == "deterministic"
+        assert diagnostics["query_understanding_status"] == "ok"
+        assert diagnostics["retrieved_count"] == 2
+        assert diagnostics["deduplicated_count"] == 2
+        assert diagnostics["ranked_count"] == 2
+        assert diagnostics["evidence_assessed_count"] == 2
     finally:
         clear_overrides()
 

@@ -134,7 +134,7 @@ Example response (truncated):
 
 ### `POST /v1/medical/ask`
 
-This endpoint reuses the evidence retrieval service and configured answer and claim-verification providers. `ANSWER_PROVIDER=perplexity` uses the Perplexity Agent API without search tools and requires `PERPLEXITY_API_KEY`. `ANSWER_PROVIDER=dev` is restricted to development/test and returns only an exact matching abstract sentence, verified by an exact-text verifier; it does not generate clinical synthesis. With the default Perplexity selection and no key, the endpoint returns HTTP 503.
+This endpoint reuses the evidence retrieval service and configured answer and claim-verification providers. `ANSWER_PROVIDER=perplexity` uses the Perplexity Agent API without search tools and requires `PERPLEXITY_API_KEY`. `ANSWER_PROVIDER=dev` is restricted to development/test and returns only an exact matching abstract sentence, verified by an exact-text verifier; it does not generate clinical synthesis. With the default Perplexity selection and no key, the endpoint returns HTTP 503 with `detail.reason_code=answer_provider_not_configured`.
 
 Request:
 
@@ -166,7 +166,7 @@ Response:
 }
 ```
 
-Citation IDs are assigned to retrieved evidence for that request. Membership is checked deterministically, then each answer claim is checked against only its cited evidence. The answer text must have exact sentence coverage by structured claims; the successful response is rendered from verified claims with their citation IDs, never from the provider's free-form answer. Unsupported or uncertain claims, missing citations, incomplete claim coverage, or verifier failure produce an abstention. Claim statuses and confidence are returned for auditing. Search-provider failure returns HTTP 503; answer-provider failure or invalid citations return HTTP 502.
+Citation IDs are assigned to retrieved evidence for that request. Membership is checked deterministically, then each answer claim is checked against only its cited evidence. The answer text must have exact sentence coverage by structured claims; the successful response is rendered from verified claims with their citation IDs, never from the provider's free-form answer. Unsupported or uncertain claims, missing citations, incomplete claim coverage, or verifier failure produce an abstention. Claim statuses and confidence are returned for auditing. The additive `diagnostics` object reports safe provider names, stage statuses, counts, and a machine-readable `reason_code`; it does not include prompts, headers, or secrets. Search results also include `pipeline_diagnostics` with retrieval, deduplication, ranking, and assessment counts. Search-provider failure returns HTTP 503; answer-provider failure or invalid citations return HTTP 502 with a reason code. These diagnostics explain pipeline behavior; retrieved records alone do not establish claim support.
 
 ## Tests
 

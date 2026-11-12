@@ -75,7 +75,7 @@ async def answer_provider_context(settings: Settings) -> AsyncIterator[AnswerPro
             await provider.close()
         return
     if not settings.perplexity_api_key:
-        raise MedicalApplicationError(503, "No answer provider is configured.")
+        raise MedicalApplicationError(503, "No answer provider is configured.", "answer_provider_not_configured")
     provider = PerplexityAnswerProvider(settings)
     try:
         yield provider
@@ -94,7 +94,7 @@ async def claim_verifier_context(settings: Settings) -> AsyncIterator[ClaimVerif
             await verifier.close()
         return
     if not settings.perplexity_api_key:
-        raise MedicalApplicationError(503, "No claim verifier is configured.")
+        raise MedicalApplicationError(503, "No claim verifier is configured.", "claim_verification_failed")
     verifier = PerplexityClaimVerifier(settings)
     try:
         yield verifier

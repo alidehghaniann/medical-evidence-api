@@ -60,3 +60,15 @@ class AskResponse(BaseModel):
     abstained: bool
     evidence_count: int = Field(ge=0)
     claim_verifications: list[ClaimVerification] = Field(default_factory=list)
+    diagnostics: "AskDiagnostics" = Field(default_factory=lambda: AskDiagnostics())
+
+
+class AskDiagnostics(BaseModel):
+    """Safe, request-scoped explanation of the ask pipeline."""
+
+    reason_code: str | None = None
+    query_language: str | None = None
+    query_intent: str | None = None
+    stages: dict[str, str] = Field(default_factory=dict)
+    providers: dict[str, str] = Field(default_factory=dict)
+    counts: dict[str, int] = Field(default_factory=dict)

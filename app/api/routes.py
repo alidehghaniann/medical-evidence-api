@@ -27,7 +27,8 @@ async def get_answer_provider(settings: Settings = Depends(get_settings)) -> Asy
         async with answer_provider_context(settings) as provider:
             yield provider
     except MedicalApplicationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        detail = {"reason_code": exc.reason_code, "message": exc.detail} if exc.reason_code else exc.detail
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
 
 
 async def get_claim_verifier(settings: Settings = Depends(get_settings)) -> AsyncGenerator[ClaimVerifier, None]:
@@ -35,7 +36,8 @@ async def get_claim_verifier(settings: Settings = Depends(get_settings)) -> Asyn
         async with claim_verifier_context(settings) as verifier:
             yield verifier
     except MedicalApplicationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        detail = {"reason_code": exc.reason_code, "message": exc.detail} if exc.reason_code else exc.detail
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
 
 
 @router.get("/")
@@ -107,4 +109,5 @@ async def medical_ask_route(
     try:
         return await medical_ask(request, service, answer_provider, claim_verifier)
     except MedicalApplicationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        detail = {"reason_code": exc.reason_code, "message": exc.detail} if exc.reason_code else exc.detail
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc

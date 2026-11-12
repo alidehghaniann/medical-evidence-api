@@ -45,6 +45,22 @@ class EvidenceRecord(BaseModel):
         return self
 
 
+class SearchPipelineDiagnostics(BaseModel):
+    """Secret-free processing counts and provider states for one search."""
+
+    query_understanding_provider: str = "unknown"
+    query_understanding_status: str = "unknown"
+    intent: str | None = None
+    medical_terms_count: int = 0
+    provider_status: dict[str, str] = Field(default_factory=dict)
+    retrieved_by_provider: dict[str, int] = Field(default_factory=dict)
+    retrieved_count: int = 0
+    normalized_count: int = 0
+    deduplicated_count: int = 0
+    ranked_count: int = 0
+    evidence_assessed_count: int = 0
+
+
 class SearchRequest(BaseModel):
     query: str = Field(min_length=3, max_length=1000)
     language: str = Field(default="en", pattern="^(en|fa)$")
@@ -68,6 +84,7 @@ class SearchResponse(BaseModel):
     abstention_reason: str | None = None
     provider_status: dict[str, str]
     disclaimer: str
+    pipeline_diagnostics: SearchPipelineDiagnostics | None = None
 
     @model_validator(mode="after")
     def set_evidence_summary(self):

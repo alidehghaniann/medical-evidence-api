@@ -1,7 +1,8 @@
 import logging
+import json
 import re
 
-from app.models.answer import AnswerCitation, AnswerResult, AskResponse, ClaimToVerify, ClaimVerification
+from app.models.answer import AnswerCitation, AnswerResult, AskDiagnostics, AskResponse, ClaimToVerify, ClaimVerification
 from app.models.evidence import SearchRequest, SearchResponse
 from app.models.medical_query import MedicalQuery
 from app.providers.answer_base import AnswerProvider
@@ -15,12 +16,85 @@ from app.services.query_understanding import QueryUnderstander, understand_medic
 logger = logging.getLogger(__name__)
 
 
+def _provider_name(provider) -> str:
+    return getattr(provider, "name", type(provider).__name__.replace("Provider", "").casefold())
+
+
+def _ask_diagnostics(search_result, answer_provider, claim_verifier) -> AskDiagnostics:
+    search = search_result.pipeline_diagnostics
+    providers = {
+        "answer": _provider_name(answer_provider),
+        "claim_verifier": _provider_name(claim_verifier),
+    }
+    if search is not None:
+        providers["query_understanding"] = search.query_understanding_provider
+        providers.update({name: status for name, status in search.provider_status.items() if name != "query_understanding"})
+        counts = {
+            "medical_terms": search.medical_terms_count,
+            "retrieved_records": search.retrieved_count,
+            "normalized_records": search.normalized_count,
+            "deduplicated_records": search.deduplicated_count,
+            "ranked_records": search.ranked_count,
+            "assessed_records": search.evidence_assessed_count,
+            "returned_evidence": search_result.evidence_count,
+        }
+        query_status = search.query_understanding_status
+        source_statuses = [
+            status for name, status in search.provider_status.items() if name != "query_understanding"
+        ]
+        if source_statuses and all(status == "skipped_query_understanding" for status in source_statuses):
+            retrieval_status = "skipped"
+        elif not source_statuses or all(status == "unavailable" for status in source_statuses):
+            retrieval_status = "failed"
+        else:
+            retrieval_status = "completed"
+    else:
+        providers["query_understanding"] = "unknown"
+        counts = {"returned_evidence": search_result.evidence_count}
+        query_status = "unknown"
+        retrieval_status = "unknown"
+    stages = {
+        "query_understanding": query_status,
+        "retrieval": retrieval_status,
+        "normalization": "completed",
+        "ranking": "completed",
+        "evidence_assessment": "completed",
+        "answer_provider_selection": "selected",
+        "answer_provider_execution": "not_started",
+        "answer_parsing": "not_started",
+        "claim_extraction": "not_started",
+        "citation_mapping": "not_started",
+        "claim_verification": "not_started",
+        "abstention": "pending",
+    }
+    return AskDiagnostics(
+        query_language=search_result.language,
+        query_intent=search.intent if search is not None else None,
+        stages=stages,
+        providers=providers,
+        counts=counts,
+    )
+
+
+def _log_ask_diagnostics(diagnostics: AskDiagnostics, *, error_type: str | None = None) -> None:
+    log = logger.warning if error_type else logger.info
+    log(
+        "medical ask diagnostic reason_code=%s providers=%s stages=%s counts=%s error_type=%s",
+        diagnostics.reason_code or "none",
+        diagnostics.providers,
+        diagnostics.stages,
+        diagnostics.counts,
+        error_type or "none",
+    )
+
+
 class MedicalApplicationError(Exception):
     """Controlled application failure shared by the REST and MCP interfaces."""
 
-    def __init__(self, status_code: int, detail: str):
+    def __init__(self, status_code: int, detail: str, reason_code: str | None = None):
         self.status_code = status_code
         self.detail = detail
+        self.reason_code = reason_code
         super().__init__(detail)
 
 
@@ -112,22 +186,38 @@ async def medical_ask(
 ) -> AskResponse:
     logger.info("medical ask started")
     search_result = await service.search(request)
+    diagnostics = _ask_diagnostics(search_result, answer_provider, claim_verifier)
     statuses = search_result.provider_status
     if not statuses or all(status == "unavailable" for status in statuses.values()):
         logger.warning("medical ask failed because all evidence providers are unavailable")
-        raise MedicalApplicationError(503, "Evidence search providers are unavailable.")
+        raise MedicalApplicationError(503, "Evidence search providers are unavailable.", "retrieval_failed")
     if search_result.abstained or not search_result.evidence:
-        logger.info("medical ask abstained stage=evidence")
-        return abstention(request.language, len(search_result.evidence))
+        query_status = diagnostics.stages["query_understanding"]
+        if query_status in {"unavailable", "not_configured"}:
+            reason = "query_understanding_failed"
+        else:
+            reason = "no_evidence" if not search_result.evidence else "insufficient_evidence"
+        diagnostics.reason_code = reason
+        diagnostics.stages["abstention"] = "abstained"
+        _log_ask_diagnostics(diagnostics)
+        return abstention(request.language, len(search_result.evidence), diagnostics=diagnostics)
 
+    diagnostics.stages["answer_provider_execution"] = "started"
     try:
         result: AnswerResult = await answer_provider.answer(
             request.query, search_result.evidence, request.language
         )
     except Exception as exc:
-        logger.warning("medical answer provider failed error_type=%s", type(exc).__name__)
-        raise MedicalApplicationError(502, "Answer provider failed.") from exc
+        diagnostics.stages["answer_provider_execution"] = "failed"
+        diagnostics.reason_code = "answer_parse_failed" if isinstance(exc, (ValueError, json.JSONDecodeError)) else "answer_provider_failed"
+        diagnostics.stages["abstention"] = "error"
+        _log_ask_diagnostics(diagnostics, error_type=type(exc).__name__)
+        raise MedicalApplicationError(502, "Answer provider failed.", diagnostics.reason_code) from exc
 
+    diagnostics.stages["answer_provider_execution"] = "succeeded"
+    diagnostics.stages["answer_parsing"] = "succeeded"
+    diagnostics.stages["claim_extraction"] = "completed"
+    diagnostics.counts["claims_extracted"] = len(result.claims)
     logger.info(
         "medical answer generated abstained=%s claim_count=%d",
         result.abstained,
@@ -137,15 +227,45 @@ async def medical_ask(
     try:
         citations = map_citations(result, search_result.evidence)
     except InvalidCitationError as exc:
-        logger.warning("medical answer citation validation failed")
-        raise MedicalApplicationError(502, "Answer provider returned an invalid citation.") from exc
+        diagnostics.stages["citation_mapping"] = "failed"
+        diagnostics.reason_code = "citation_mapping_failed"
+        diagnostics.stages["abstention"] = "error"
+        _log_ask_diagnostics(diagnostics, error_type=type(exc).__name__)
+        raise MedicalApplicationError(502, "Answer provider returned an invalid citation.", "citation_mapping_failed") from exc
 
-    if result.abstained or not result.answer.strip() or not result.claims or not citations:
-        logger.info("medical ask abstained stage=answer_validation")
-        return abstention(request.language, len(search_result.evidence))
-    if not answer_is_covered_by_claims(result.answer, [claim.text for claim in result.claims]):
-        logger.info("medical ask abstained stage=claim_coverage")
-        return abstention(request.language, len(search_result.evidence))
+    diagnostics.stages["citation_mapping"] = "succeeded"
+    diagnostics.counts["citations_mapped"] = len(citations)
+    if result.abstained:
+        diagnostics.reason_code = "insufficient_evidence"
+        diagnostics.stages["abstention"] = "abstained"
+        _log_ask_diagnostics(diagnostics)
+        return abstention(request.language, len(search_result.evidence), diagnostics=diagnostics)
+    if not result.answer.strip():
+        diagnostics.reason_code = "answer_parse_failed"
+        diagnostics.stages["abstention"] = "abstained"
+        _log_ask_diagnostics(diagnostics)
+        return abstention(request.language, len(search_result.evidence), diagnostics=diagnostics)
+    if not result.claims:
+        diagnostics.reason_code = "no_claims"
+        diagnostics.stages["abstention"] = "abstained"
+        _log_ask_diagnostics(diagnostics)
+        return abstention(request.language, len(search_result.evidence), diagnostics=diagnostics)
+    if not citations:
+        diagnostics.reason_code = "citation_mapping_failed"
+        diagnostics.stages["abstention"] = "abstained"
+        _log_ask_diagnostics(diagnostics)
+        return abstention(request.language, len(search_result.evidence), diagnostics=diagnostics)
+    answer_sentence_count, covered_answer_sentence_count = answer_claim_coverage(
+        result.answer, [claim.text for claim in result.claims]
+    )
+    diagnostics.counts["answer_sentences"] = answer_sentence_count
+    diagnostics.counts["covered_answer_sentences"] = covered_answer_sentence_count
+    if answer_sentence_count == 0 or answer_sentence_count != covered_answer_sentence_count:
+        diagnostics.reason_code = "claim_coverage_failed"
+        diagnostics.stages["claim_extraction"] = "incomplete_coverage"
+        diagnostics.stages["abstention"] = "abstained"
+        _log_ask_diagnostics(diagnostics)
+        return abstention(request.language, len(search_result.evidence), diagnostics=diagnostics)
 
     evidence_by_id = {
         f"evidence-{index}": record for index, record in enumerate(search_result.evidence, start=1)
@@ -166,9 +286,11 @@ async def medical_ask(
         for claim in uncited_claims
     ]
     if cited_claims:
+        diagnostics.stages["claim_verification"] = "started"
         try:
             verified = await claim_verifier.verify(cited_claims)
             verified = validate_verifications(cited_claims, verified)
+            diagnostics.stages["claim_verification"] = "completed"
             verifications.extend([
                 item.model_copy(update={"status": "uncertain"})
                 if item.status == "supported" and item.confidence < 0.7 else item
@@ -176,9 +298,17 @@ async def medical_ask(
             ])
         except Exception as exc:
             logger.warning("medical claim verifier failed error_type=%s", type(exc).__name__)
+            diagnostics.stages["claim_verification"] = "failed"
+            diagnostics.reason_code = "claim_verification_failed"
             verifications.extend(uncertain_verifications(cited_claims))
 
+    diagnostics.counts["supported_claims"] = sum(item.status == "supported" for item in verifications)
+    diagnostics.counts["unsupported_claims"] = sum(item.status == "unsupported" for item in verifications)
+    diagnostics.counts["uncertain_claims"] = sum(item.status == "uncertain" for item in verifications)
     if any(item.status != "supported" for item in verifications):
+        if diagnostics.reason_code is None:
+            diagnostics.reason_code = "unsupported_claims" if diagnostics.counts["unsupported_claims"] else "uncertain_claims"
+        diagnostics.stages["abstention"] = "abstained"
         logger.info(
             "medical claim verification completed supported=%d unsupported=%d uncertain=%d",
             sum(item.status == "supported" for item in verifications),
@@ -186,17 +316,22 @@ async def medical_ask(
             sum(item.status == "uncertain" for item in verifications),
         )
         logger.info("medical ask abstained stage=claim_verification")
+        _log_ask_diagnostics(diagnostics)
         return abstention(
             request.language,
             len(search_result.evidence),
             citations=citations,
             claim_verifications=verifications,
+            diagnostics=diagnostics,
         )
     logger.info(
         "medical claim verification completed supported=%d unsupported=0 uncertain=0",
         len(verifications),
     )
     confidence = min(result.confidence, *(item.confidence for item in verifications))
+    diagnostics.stages["abstention"] = "not_abstained"
+    diagnostics.reason_code = None
+    _log_ask_diagnostics(diagnostics)
     return AskResponse(
         answer=render_verified_claims(claim_requests),
         language=request.language,
@@ -205,17 +340,21 @@ async def medical_ask(
         abstained=False,
         evidence_count=len(search_result.evidence),
         claim_verifications=verifications,
+        diagnostics=diagnostics,
     )
 
 
 def answer_is_covered_by_claims(answer: str, claims: list[str]) -> bool:
+    sentence_count, covered_count = answer_claim_coverage(answer, claims)
+    return bool(sentence_count) and sentence_count == covered_count
+
+
+def answer_claim_coverage(answer: str, claims: list[str]) -> tuple[int, int]:
     answer_without_citations = re.sub(r"\[?evidence-\d+\]?", "", answer, flags=re.IGNORECASE)
     sentences = [part.strip() for part in re.split(r"[.!?؟\n]+", answer_without_citations) if part.strip()]
     normalized_claims = {normalize_answer_sentence(claim) for claim in claims}
-    return bool(sentences) and all(
-        normalize_answer_sentence(sentence) in normalized_claims
-        for sentence in sentences
-    )
+    covered = sum(normalize_answer_sentence(sentence) in normalized_claims for sentence in sentences)
+    return len(sentences), covered
 
 
 def normalize_answer_sentence(text: str) -> str:
@@ -266,6 +405,7 @@ def abstention(
     evidence_count: int = 0,
     citations: list[AnswerCitation] | None = None,
     claim_verifications: list[ClaimVerification] | None = None,
+    diagnostics: AskDiagnostics | None = None,
 ) -> AskResponse:
     answer = (
         "شواهد کافی برای ارائه پاسخ قابل اتکا بازیابی نشد."
@@ -280,4 +420,9 @@ def abstention(
         abstained=True,
         evidence_count=evidence_count,
         claim_verifications=claim_verifications or [],
+        diagnostics=diagnostics or AskDiagnostics(
+            reason_code="no_evidence",
+            stages={"abstention": "abstained"},
+            counts={"returned_evidence": evidence_count},
+        ),
     )
