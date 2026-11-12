@@ -323,6 +323,130 @@ def test_low_verifier_confidence_is_downgraded_to_uncertain():
     assert response.json()["claim_verifications"][0]["status"] == "uncertain"
 
 
+@pytest.mark.parametrize(("answer", "claim"), [
+    # 1 - citation at the end
+    ("Drug X reduced mortality [evidence-1].", "Drug X reduced mortality [evidence-1]."),
+    # 2 - parenthesised citation
+    ("Drug X reduced mortality (evidence-1).", "Drug X reduced mortality [evidence-1]."),
+    # 3 - citation in prose
+    ("Drug X reduced mortality (see evidence-1).", "Drug X reduced mortality [evidence-1]."),
+    ("Drug X reduced mortality (source: evidence-1).", "Drug X reduced mortality [evidence-1]."),
+    ("Drug X reduced mortality evidence-1.", "Drug X reduced mortality [evidence-1]."),
+    # 5 - several citations in one sentence
+    (
+        "Drug X reduced mortality [evidence-1] and improved survival [evidence-2].",
+        "Drug X reduced mortality and improved survival [evidence-1].",
+    ),
+    # 6 - harmless whitespace and punctuation differences
+    ("  Drug   X reduced mortality,  [evidence-1] .", "Drug X reduced mortality"),
+    ("Drug X reduced mortality  ( evidence-1 ),", "Drug X reduced mortality [evidence-1]"),
+])
+def test_answer_claim_coverage_normalizes_citation_placement(answer, claim):
+    from app.services.medical_application import answer_claim_coverage
+
+    assert answer_claim_coverage(answer, [claim]) == (1, 1)
+
+
+def test_multi_sentence_claim_covers_each_answer_sentence():
+    from app.services.medical_application import answer_claim_coverage
+
+    answer = "Drug X reduced mortality. It improved survival [evidence-1]."
+    claim = "Drug X reduced mortality. It improved survival [evidence-1]."
+    assert answer_claim_coverage(answer, [claim]) == (2, 2)
+
+
+def test_claims_split_across_entries_cover_a_shared_answer():
+    from app.services.medical_application import answer_claim_coverage
+
+    assert answer_claim_coverage("Drug X reduced mortality. It improved survival.", [
+        "Drug X reduced mortality",
+        "It improved survival",
+    ]) == (2, 2)
+
+
+def test_normalization_does_not_turn_an_unsupported_answer_into_covered_text():
+    from app.services.medical_application import answer_claim_coverage
+
+    # Semantically adjacent, textually different: coverage must still fail.
+    assert answer_claim_coverage("Drug X completely prevents cancer.", ["Drug X may reduce mortality."]) == (1, 0)
+    assert answer_claim_coverage("Drug X reduced mortality.", ["Drug X reduces mortality"]) == (1, 0)
+
+
+def test_citation_wording_is_not_what_makes_a_claim_coverable():
+    from app.services.medical_application import answer_claim_coverage
+
+    # Only citation tokens differ, so the sentence is covered.
+    assert answer_claim_coverage("Drug X reduced mortality (evidence-1).", ["Drug X reduced mortality"]) == (1, 1)
+
+
+def test_ask_accepts_parenthesised_citation_and_multi_sentence_claim():
+    result = AnswerResult(
+        answer="Drug X reduced mortality (evidence-1). It improved survival (evidence-1).",
+        confidence=0.8,
+        abstained=False,
+        citations=[ProviderCitation(evidence_id="evidence-1")],
+        claims=[AnswerClaim(
+            text="Drug X reduced mortality. It improved survival [evidence-1].",
+            citation_ids=["evidence-1"],
+        )],
+    )
+    verifier = FakeClaimVerifier()
+    with setup_client([evidence_record()], FakeAnswerProvider(result), claim_verifier=verifier) as client:
+        response = client.post("/v1/medical/ask", json={"query": "treatment evidence"})
+    clear_overrides()
+    body = response.json()
+    assert response.status_code == 200
+    assert body["abstained"] is False
+    assert verifier.calls == 1
+    assert body["diagnostics"]["counts"]["answer_sentences"] == 2
+    assert body["diagnostics"]["counts"]["covered_answer_sentences"] == 2
+    assert body["diagnostics"]["stages"]["claim_verification"] == "completed"
+
+
+def test_ask_still_abstains_when_the_claim_text_does_not_match_the_answer():
+    result = AnswerResult(
+        answer="Drug X completely prevents cancer.",
+        confidence=0.8,
+        abstained=False,
+        citations=[ProviderCitation(evidence_id="evidence-1")],
+        claims=[AnswerClaim(text="Drug X may reduce mortality.", citation_ids=["evidence-1"])],
+    )
+    verifier = FakeClaimVerifier()
+    with setup_client([evidence_record()], FakeAnswerProvider(result), claim_verifier=verifier) as client:
+        response = client.post("/v1/medical/ask", json={"query": "treatment evidence"})
+    clear_overrides()
+    body = response.json()
+    assert body["abstained"] is True
+    assert "prevents cancer" not in body["answer"]
+    assert body["diagnostics"]["reason_code"] == "claim_coverage_failed"
+    assert verifier.calls == 0
+
+
+def test_repeated_claim_text_still_needs_exact_text_equality():
+    from app.services.medical_application import answer_claim_coverage
+
+    # Case and citation placement are normalized; wording is not.
+    assert answer_claim_coverage("drug x reduced mortality [evidence-1]", ["Drug X reduced mortality"]) == (1, 1)
+    assert answer_claim_coverage("Drug X lowered mortality [evidence-1]", ["Drug X reduced mortality"]) == (1, 0)
+
+
+def test_positional_evidence_id_shift_is_detectable_by_the_callers_map():
+    """Regression guard for the positional evidence-ID design.
+
+    `map_citations` and the claim-verification map both build `evidence-<n>` from
+    the same list position. Reordering the evidence without reordering the
+    answer's citation tokens silently repoints a citation at another record, so
+    callers must pass one list. This test pins the current, deferred behaviour.
+    """
+    from app.services.citation_validation import map_citations
+
+    first = evidence_record()
+    second = evidence_record().model_copy(update={"source_id": "456", "title": "Second study"})
+    result = FakeAnswerProvider().result
+    assert map_citations(result, [first, second])[0].source_id == "123"
+    assert map_citations(result, [second, first])[0].source_id == "456"
+
+
 def test_citation_mapping_uses_only_retrieved_metadata():
     from app.services.citation_validation import map_citations
 

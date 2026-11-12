@@ -350,17 +350,39 @@ def answer_is_covered_by_claims(answer: str, claims: list[str]) -> bool:
 
 
 def answer_claim_coverage(answer: str, claims: list[str]) -> tuple[int, int]:
-    answer_without_citations = re.sub(r"\[?evidence-\d+\]?", "", answer, flags=re.IGNORECASE)
-    sentences = [part.strip() for part in re.split(r"[.!?؟\n]+", answer_without_citations) if part.strip()]
-    normalized_claims = {normalize_answer_sentence(claim) for claim in claims}
-    covered = sum(normalize_answer_sentence(sentence) in normalized_claims for sentence in sentences)
+    """Count answer sentences and the ones whose text a claim covers.
+
+    Both sides use the same normalization and sentence segmentation, so a claim
+    that repeats several answer sentences covers each of them. Coverage remains
+    exact text equality after normalization: it never becomes a similarity test.
+    """
+    sentences = _normalized_sentences(answer)
+    claim_sentences = {sentence for claim in claims for sentence in _normalized_sentences(claim)}
+    covered = sum(sentence in claim_sentences for sentence in sentences)
     return len(sentences), covered
 
 
+_SENTENCE_BOUNDARY = re.compile(r"[.!?؟\n]+")
+_TRAILING_PUNCTUATION = re.compile(r"[؛:،,]+$")
+
+
 def normalize_answer_sentence(text: str) -> str:
-    text = re.sub(r"\[?evidence-\d+\]?", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"[.!?؟؛:،,]+$", "", text.strip())
+    """Reduce a sentence to its comparable text without changing its wording."""
+    # Citation tokens carry no claim text, so they are removed before comparison.
+    # The parenthesised/bracketed forms are dropped as a whole, which also removes
+    # any lead-in such as "(see ...)" or "(source: ...)".
+    text = re.sub(r"[\[(][^\])]*evidence-\d+[^\])]*[\])]", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"evidence-\d+", " ", text, flags=re.IGNORECASE)
+    text = _TRAILING_PUNCTUATION.sub("", " ".join(text.split()))
     return " ".join(text.casefold().split())
+
+
+def _normalized_sentences(text: str) -> list[str]:
+    return [
+        normalized
+        for part in _SENTENCE_BOUNDARY.split(text)
+        if (normalized := normalize_answer_sentence(part))
+    ]
 
 
 def render_verified_claims(claims: list[ClaimToVerify]) -> str:
