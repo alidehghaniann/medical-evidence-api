@@ -357,30 +357,71 @@ def answer_claim_coverage(answer: str, claims: list[str]) -> tuple[int, int]:
     exact text equality after normalization: it never becomes a similarity test.
     """
     sentences = _normalized_sentences(answer)
-    claim_sentences = {sentence for claim in claims for sentence in _normalized_sentences(claim)}
-    covered = sum(sentence in claim_sentences for sentence in sentences)
+    claim_sentences = {
+        normalize_answer_sentence(sentence)
+        for claim in claims
+        for sentence in _normalized_sentences(claim)
+    }
+    covered = sum(normalize_answer_sentence(sentence) in claim_sentences for sentence in sentences)
     return len(sentences), covered
 
 
-_SENTENCE_BOUNDARY = re.compile(r"[.!?؟\n]+")
-_TRAILING_PUNCTUATION = re.compile(r"[؛:،,]+$")
+_SENTINEL = "\x00"
+# Leading separators come from citations stripped at the start of a sentence. A
+# single leading dot is kept: it is either a disfluent "..." or a decimal like ".5".
+_LEADING_SEPARATORS = re.compile(r"^[ ,;:\u060c\u061b]*\.{0,2}")
+# A boundary is sentence punctuation followed by whitespace or the end of the text,
+# or sentence punctuation followed directly by a capital letter. A bare split on the
+# punctuation would also cut "74.7%", "1.14-1.76" and "1.42" into fragments, so a
+# claim could never match its own sentence.
+_SENTENCE_BOUNDARY = re.compile(
+    r"(?<=[.!?؟])\s+|\n+|(?<=[.!?؟])$|(?<=[.!?])(?=[A-Z][a-z])"
+)
 
 
 def normalize_answer_sentence(text: str) -> str:
     """Reduce a sentence to its comparable text without changing its wording."""
     # Citation tokens carry no claim text, so they are removed before comparison.
     # The parenthesised/bracketed forms are dropped as a whole, which also removes
-    # any lead-in such as "(see ...)" or "(source: ...)".
-    text = re.sub(r"[\[(][^\])]*evidence-\d+[^\])]*[\])]", " ", text, flags=re.IGNORECASE)
-    text = re.sub(r"evidence-\d+", " ", text, flags=re.IGNORECASE)
-    text = _TRAILING_PUNCTUATION.sub("", " ".join(text.split()))
+    # any lead-in such as "(see ...)" or "(source: ...)". Only the token itself is
+    # replaced; the surrounding prose is left exactly as written.
+    text = re.sub(r"[\[(][^\])]*evidence-\d+[^\])]*[\])]", _SENTINEL, text, flags=re.IGNORECASE)
+    text = re.sub(r"evidence-\d+", _SENTINEL, text, flags=re.IGNORECASE)
+    text = " ".join(text.split())
+    text = _LEADING_SEPARATORS.sub("", text).lstrip(" ,;:\u060c\u061b")
+    # A separator left where a citation stood is dropped with it.
+    text = re.sub(_SENTINEL + r"([\s,;:\u060c\u061b.]*)" + _SENTINEL, _SENTINEL, text)
+    text = re.sub(_SENTINEL + r"[\s,;:\u060c\u061b.]+$", "", text)
+    text = re.sub(_SENTINEL + r"(?=[.,;:\u060c\u061b])", "", text)
+    text = text.replace(_SENTINEL, " ")
+    text = re.sub(r"[\s,;:\u060c\u061b.]+$", "", text)
     return " ".join(text.casefold().split())
+
+
+# A citation token with a sentence boundary in front of it is moved behind that
+# boundary, so what follows the token starts the next sentence instead of reading
+# as a full stop inside one claim. Only spaces are moved: a token that is followed
+# directly by a capital is left alone, because no boundary can be told apart there.
+_CITATION_TOKEN_AT_BOUNDARY = re.compile(
+    r"(?<=[.!?\u061f])[ ]*(\[?evidence-\d\]?)[ ]*(?=[A-Z\u0600-\u06ff])"
+)
+
+
+def _split_citation_runs(text: str) -> str:
+    """Move a citation token that starts a sentence back onto the sentence it cites.
+
+    "... advantage. [evidence-3] The next claim" and "... advantage. [evidence-3]The
+    next claim" are two sentences, but a token sitting on the boundary makes the
+    splitter treat the boundary as a full stop inside one claim. Moving the token
+    behind the boundary leaves what follows it to start the next sentence.
+    """
+    return _CITATION_TOKEN_AT_BOUNDARY.sub(" ", text)
 
 
 def _normalized_sentences(text: str) -> list[str]:
     return [
         normalized
-        for part in _SENTENCE_BOUNDARY.split(text)
+        for part in _SENTENCE_BOUNDARY.split(_split_citation_runs(text))
         if (normalized := normalize_answer_sentence(part))
     ]
 

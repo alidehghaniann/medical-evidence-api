@@ -63,7 +63,8 @@ async def test_dev_provider_emits_only_an_exact_cited_abstract_sentence():
 
     assert isinstance(result, AnswerResult)
     assert result.abstained is False
-    assert result.answer == EXCERPT
+    # The answer is the claims with their citations, never bare narrative text.
+    assert result.answer == f"{EXCERPT} [evidence-1]"
     assert result.claims == [AnswerClaim(text=EXCERPT, citation_ids=["evidence-1"])]
     assert result.citations == [ProviderCitation(evidence_id="evidence-1")]
 

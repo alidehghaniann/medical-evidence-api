@@ -216,25 +216,49 @@ def test_unknown_citation_is_rejected(caplog):
     assert "reason_code=citation_mapping_failed" in caplog.text
 
 
-def test_extra_factual_answer_statement_not_in_claims_abstains():
+def test_an_extra_answer_sentence_beside_the_claims_never_reaches_the_pipeline():
+    """An answer may not carry a sentence its claims do not contain.
+
+    The provider contract now rejects that shape when the answer is built, so the
+    extra sentence cannot reach coverage at all. Coverage still refuses it if a
+    provider ever manages to construct such a result.
+    """
+    with pytest.raises(ValidationError):
+        AnswerResult(
+            answer="Drug X is effective. Drug X also reduces mortality.",
+            confidence=0.9,
+            abstained=False,
+            citations=[ProviderCitation(evidence_id="evidence-1")],
+            claims=[AnswerClaim(text="Drug X is effective", citation_ids=["evidence-1"])],
+        )
+
     result = AnswerResult(
-        answer="Drug X is effective. Drug X also reduces mortality.",
         confidence=0.9,
         abstained=False,
         citations=[ProviderCitation(evidence_id="evidence-1")],
-        claims=[AnswerClaim(text="Drug X is effective", citation_ids=["evidence-1"])],
+        claims=[
+            AnswerClaim(text="Drug X is effective", citation_ids=["evidence-1"]),
+            AnswerClaim(text="Drug X also reduces mortality", citation_ids=["evidence-1"]),
+        ],
     )
-    verifier = FakeClaimVerifier()
-    with setup_client([evidence_record()], FakeAnswerProvider(result), claim_verifier=verifier) as client:
+    assert result.answer == "Drug X is effective. [evidence-1] Drug X also reduces mortality. [evidence-1]"
+
+    covered_result = AnswerResult(
+        confidence=0.9,
+        abstained=False,
+        citations=[ProviderCitation(evidence_id="evidence-1")],
+        claims=[
+            AnswerClaim(text="Drug X is effective", citation_ids=["evidence-1"]),
+            AnswerClaim(text="A second claim", citation_ids=["evidence-1"]),
+        ],
+    )
+    verdict = FakeClaimVerifier(status="unsupported", confidence=0.9)
+    with setup_client([evidence_record()], FakeAnswerProvider(covered_result), claim_verifier=verdict) as client:
         response = client.post("/v1/medical/ask", json={"query": "treatment evidence"})
     clear_overrides()
-    assert response.status_code == 200
     assert response.json()["abstained"] is True
-    assert "reduces mortality" not in response.json()["answer"]
-    assert response.json()["diagnostics"]["reason_code"] == "claim_coverage_failed"
-    assert response.json()["diagnostics"]["counts"]["answer_sentences"] == 2
-    assert response.json()["diagnostics"]["counts"]["covered_answer_sentences"] == 1
-    assert verifier.calls == 0
+    assert verdict.calls == 1
+    assert response.json()["diagnostics"]["reason_code"] == "unsupported_claims"
 
 
 def test_claim_without_citation_abstains():
@@ -252,14 +276,24 @@ def test_claim_without_citation_abstains():
     assert response.json()["abstained"] is True
 
 
-def test_unrecognized_source_url_in_answer_is_rejected():
-    result = AnswerResult(answer="See https://untrusted.example/article [evidence-1]", confidence=0.8,
-        abstained=False, citations=[ProviderCitation(evidence_id="evidence-1")],
-        claims=[AnswerClaim(text="See a source", citation_ids=["evidence-1"])])
-    with setup_client([evidence_record()], FakeAnswerProvider(result)) as client:
+def test_an_answer_containing_a_source_url_is_rejected_by_the_provider_contract():
+    """A URL cannot ride along in the answer text any more."""
+    with pytest.raises(ValidationError):
+        AnswerResult(answer="See https://untrusted.example/article [evidence-1]", confidence=0.8,
+            abstained=False, citations=[ProviderCitation(evidence_id="evidence-1")],
+            claims=[AnswerClaim(text="See a source", citation_ids=["evidence-1"])])
+
+    url_as_claim = AnswerResult(
+        confidence=0.8,
+        abstained=False,
+        citations=[ProviderCitation(evidence_id="evidence-1")],
+        claims=[AnswerClaim(text="See https://untrusted.example/article", citation_ids=["evidence-1"])],
+    )
+    with setup_client([evidence_record()], FakeAnswerProvider(url_as_claim)) as client:
         response = client.post("/v1/medical/ask", json={"query": "treatment evidence"})
     clear_overrides()
     assert response.status_code == 502
+    assert response.json()["detail"]["reason_code"] == "citation_mapping_failed"
 
 
 @pytest.mark.parametrize("status", ["unsupported", "uncertain"])
@@ -403,23 +437,16 @@ def test_ask_accepts_parenthesised_citation_and_multi_sentence_claim():
     assert body["diagnostics"]["stages"]["claim_verification"] == "completed"
 
 
-def test_ask_still_abstains_when_the_claim_text_does_not_match_the_answer():
-    result = AnswerResult(
-        answer="Drug X completely prevents cancer.",
-        confidence=0.8,
-        abstained=False,
-        citations=[ProviderCitation(evidence_id="evidence-1")],
-        claims=[AnswerClaim(text="Drug X may reduce mortality.", citation_ids=["evidence-1"])],
-    )
-    verifier = FakeClaimVerifier()
-    with setup_client([evidence_record()], FakeAnswerProvider(result), claim_verifier=verifier) as client:
-        response = client.post("/v1/medical/ask", json={"query": "treatment evidence"})
-    clear_overrides()
-    body = response.json()
-    assert body["abstained"] is True
-    assert "prevents cancer" not in body["answer"]
-    assert body["diagnostics"]["reason_code"] == "claim_coverage_failed"
-    assert verifier.calls == 0
+def test_an_answer_that_contradicts_its_own_claims_is_rejected():
+    """A narrative the claims do not contain cannot be constructed at all."""
+    with pytest.raises(ValidationError):
+        AnswerResult(
+            answer="Drug X completely prevents cancer.",
+            confidence=0.8,
+            abstained=False,
+            citations=[ProviderCitation(evidence_id="evidence-1")],
+            claims=[AnswerClaim(text="Drug X may reduce mortality.", citation_ids=["evidence-1"])],
+        )
 
 
 def test_repeated_claim_text_still_needs_exact_text_equality():
@@ -428,6 +455,58 @@ def test_repeated_claim_text_still_needs_exact_text_equality():
     # Case and citation placement are normalized; wording is not.
     assert answer_claim_coverage("drug x reduced mortality [evidence-1]", ["Drug X reduced mortality"]) == (1, 1)
     assert answer_claim_coverage("Drug X lowered mortality [evidence-1]", ["Drug X reduced mortality"]) == (1, 0)
+
+
+def test_medical_numbers_are_not_split_into_sentence_fragments():
+    """A decimal point is not a sentence boundary.
+
+    The real provider answers with "74.7% versus 52.7%" and "risk ratio 1.42, 95%
+    CI 1.14-1.76". Splitting on the bare dot cut those into fragments, so the
+    claim could never match its own sentence and a correct answer abstained.
+    """
+    from app.services.medical_application import answer_claim_coverage, normalize_answer_sentence
+
+    claim = (
+        "In adults with clarithromycin-resistant infection, P-CAB-based regimens had "
+        "higher eradication success: 74.7% versus 52.7% across 12 studies "
+        "(risk ratio 1.42, 95% CI 1.14-1.76)."
+    )
+    answer = f"In adults with clarithromycin-resistant infection, P-CAB-based regimens had higher eradication success: 74.7% versus 52.7% across 12 studies (risk ratio 1.42, 95% CI 1.14-1.76). [evidence-1]"
+    assert answer_claim_coverage(answer, [claim]) == (1, 1)
+    assert normalize_answer_sentence("74.7% versus 52.7%.") == "74.7% versus 52.7%"
+
+
+def test_a_citation_token_on_a_sentence_boundary_does_not_merge_the_sentences():
+    """A citation token sits on the boundary, never inside it.
+
+    "... mortality [evidence-1]. It improved" and "... advantage. [evidence-3] The
+    next claim" are two sentences each, and a token that is not followed by a
+    sentence still splits normally.
+    """
+    from app.services.medical_application import _normalized_sentences
+
+    assert _normalized_sentences("Drug X reduced mortality [evidence-1]. It improved survival [evidence-2].") == [
+        "drug x reduced mortality",
+        "it improved survival",
+    ]
+    assert _normalized_sentences("The advantage. [evidence-3] The ACG guideline says so.") == [
+        "the advantage",
+        "the acg guideline says so",
+    ]
+    assert _normalized_sentences("The advantage.[evidence-3]The ACG guideline says so.") == [
+        "the advantage",
+        "the acg guideline says so",
+    ]
+
+
+def test_a_leading_separator_left_by_a_stripped_citation_does_not_break_coverage():
+    """A citation stripped at a claim boundary leaves ", " behind; it is not wording."""
+    from app.services.medical_application import answer_claim_coverage
+
+    assert answer_claim_coverage(
+        "It was safe. [evidence-8], [evidence-7], [evidence-2] In a meta-analysis, success was higher.",
+        ["It was safe.", "In a meta-analysis, success was higher."],
+    ) == (2, 2)
 
 
 def test_positional_evidence_id_shift_is_detectable_by_the_callers_map():
@@ -480,7 +559,7 @@ async def test_perplexity_answer_provider_is_grounded_only_in_input_evidence():
         assert body["input"].find("evidence-1") >= 0
         return httpx.Response(200, json={"output": [{"type": "message", "content": [{
             "type": "output_text",
-            "text": '{"answer":"Supported answer [evidence-1]","confidence":0.8,"abstained":false,"citations":[{"evidence_id":"evidence-1"}],"claims":[{"text":"Supported answer","citation_ids":["evidence-1"]}]}',
+            "text": '{"confidence":0.8,"abstained":false,"citations":[{"evidence_id":"evidence-1"}],"claims":[{"text":"Supported answer","citation_ids":["evidence-1"]}]}',
         }]}]})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -499,7 +578,9 @@ async def test_perplexity_successful_http_with_malformed_answer_is_rejected():
     ))
     provider = PerplexityAnswerProvider(Settings(perplexity_api_key="test-key"), client=client)
     try:
-        with pytest.raises(ValidationError):
+        # Classification for the application is unchanged: a non-JSON body is an
+        # unparseable answer and must fail closed.
+        with pytest.raises((ValueError, ValidationError)):
             await provider.answer("question", [evidence_record()], "en")
     finally:
         await client.aclose()
