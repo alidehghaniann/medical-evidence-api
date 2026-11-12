@@ -8,6 +8,7 @@ from app.models.medical_query import (
     detect_query_language,
     normalize_query_text,
 )
+from app.services.search_terms import build_search_query
 
 
 class QueryUnderstander(Protocol):
@@ -49,12 +50,12 @@ async def understand_medical_query(
     normalized = normalize_query_text(query)
     language = detect_query_language(query)
     if language == "en":
-        terms = re.findall(r"[A-Za-z][A-Za-z0-9-]*", normalized)
+        search_query, terms = build_search_query(normalized)
         return MedicalQuery(
             original_query=query,
             language=language,
             normalized_query=normalized,
-            search_query=query,
+            search_query=search_query,
             medical_terms=terms,
             intent=classify_intent(normalized),
         )

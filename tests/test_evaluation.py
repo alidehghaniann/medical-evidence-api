@@ -137,7 +137,9 @@ async def test_benchmark_calls_shared_search_service_and_produces_reproducible_m
     first = await evaluate_service(single_case_dataset, service, k=5, evaluation_mode="mocked")
     second = await evaluate_service(single_case_dataset, service, k=5, evaluation_mode="mocked")
 
-    assert pubmed.queries == europepmc.queries == [case.query, case.query]
+    # Providers now receive the reduced search query, not the raw question.
+    reduced_query = "safety outcomes metformin use adults reduced kidney function"
+    assert pubmed.queries == europepmc.queries == [reduced_query, reduced_query]
     assert first["overall_metrics"]["precision_at_k"] == 1.0
     assert first["overall_metrics"]["recall_at_k"] == 1.0
     assert first["overall_metrics"]["reciprocal_rank"] == 1.0

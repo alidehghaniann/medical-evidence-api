@@ -133,6 +133,6 @@ async def test_general_agent_evidence_question_uses_shared_two_source_search(mon
 
     assert result.tool_name == "medical_search"
     assert client.called_tools == ["medical_search"]
-    assert pubmed.queries == [("What evidence exists about asthma?", 10)]
-    assert europepmc.queries == [("What evidence exists about asthma?", 10)]
+    assert pubmed.queries == [("evidence exists asthma", 10)]
+    assert europepmc.queries == [("evidence exists asthma", 10)]
     assert {item.source for item in result.result.evidence} == {"pubmed", "europepmc"}

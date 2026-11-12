@@ -17,11 +17,13 @@ def test_language_detection_uses_question_script_instead_of_selector():
     assert english.language == "en"
 
 
-def test_english_query_representation_preserves_existing_search_text():
+def test_english_query_representation_reduces_the_question_to_search_terms():
     query = "What evidence supports beta-blockers for heart failure?"
     result = asyncio.run(understand_medical_query(query, None))
     assert result.language == "en"
-    assert result.search_query == query
+    assert result.original_query == query
+    assert result.search_query == "evidence supports beta-blockers heart failure"
+    assert result.medical_terms == ["evidence", "supports", "beta-blockers", "heart", "failure"]
     assert result.intent == "evidence"
 
 
