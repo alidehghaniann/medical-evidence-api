@@ -1,0 +1,84 @@
+{
+  "note": "Real Perplexity answer payload captured live on the H. pylori English ask. Provider output shape only: answer text, claims and citation ids as returned. Unsupported claims are intentionally kept; the pipeline must still abstain.",
+  "query": "What is the evidence about H. pylori treatment?",
+  "language": "en",
+  "evidence_count": 10,
+  "provider_output": {
+    "answer": "Evidence supports eradication treatment, but regimen choice depends on prior treatment, antibiotic susceptibility/resistance, and setting. The supplied guidelines differ in some regimen preferences, so their recommendations should not be treated as universally interchangeable. This is informational evidence, not individualized treatment advice.",
+    "confidence": 0.92,
+    "abstained": false,
+    "citations": [
+      {
+        "evidence_id": "evidence-7"
+      },
+      {
+        "evidence_id": "evidence-2"
+      },
+      {
+        "evidence_id": "evidence-8"
+      },
+      {
+        "evidence_id": "evidence-1"
+      },
+      {
+        "evidence_id": "evidence-3"
+      },
+      {
+        "evidence_id": "evidence-9"
+      }
+    ],
+    "claims": [
+      {
+        "text": "The North American ACG guideline prefers 14-day bismuth quadruple therapy when antibiotic susceptibility is unknown for treatment-naïve patients; it lists 14-day rifabutin triple therapy or potassium-competitive acid blocker (P-CAB) dual therapy as empiric alternatives for patients without penicillin allergy.",
+        "citation_ids": [
+          "evidence-7"
+        ]
+      },
+      {
+        "text": "For persistent infection, the ACG guideline prefers 14-day optimized bismuth quadruple therapy if it has not been used previously and susceptibility is unknown; after prior optimized bismuth quadruple therapy, it lists 14-day rifabutin triple therapy as an empiric alternative. Clarithromycin- or levofloxacin-containing salvage regimens are limited to cases with confirmed susceptibility.",
+        "citation_ids": [
+          "evidence-7"
+        ]
+      },
+      {
+        "text": "The 2025 Korean guideline describes a strategy combining tailored therapy and empirical quadruple therapy, restricted use of empirical clarithromycin triple therapy under specified conditions, and P-CABs as alternatives to proton pump inhibitors (PPIs). It positions bismuth quadruple therapy conditionally as a first-line empirical option, with preference to reserve it for salvage, and also introduces modified bismuth quadruple therapy as another first-line empirical option.",
+        "citation_ids": [
+          "evidence-2"
+        ]
+      },
+      {
+        "text": "The 2022 Chinese guideline identifies bismuth quadruple therapy as a preferred initial and rescue option, and reports high-dose dual therapy as equally effective to bismuth quadruple therapy in empirical treatment. These recommendations differ from the ACG and Korean guideline descriptions, reflecting different guideline contexts.",
+        "citation_ids": [
+          "evidence-8",
+          "evidence-7",
+          "evidence-2"
+        ]
+      },
+      {
+        "text": "In a meta-analysis focused on adults with clarithromycin-resistant infection, P-CAB-based regimens had higher pooled eradication success than PPI-based comparators: 74.7% versus 52.7% across 12 comparative studies (risk ratio 1.42, 95% CI 1.14–1.76). The authors noted that further studies are needed to establish optimal antibiotic combinations, duration, and regional applicability.",
+        "citation_ids": [
+          "evidence-1"
+        ]
+      },
+      {
+        "text": "A separate meta-analysis of 11 randomized trials in treatment-naïve adults found a smaller improvement with tegoprazan-containing first-line regimens than with PPI-containing regimens (85.7% versus 81.1%; risk ratio 1.06, 95% CI 1.03–1.09; moderate-certainty evidence). Reported adverse events were less frequent with tegoprazan, but the review judged evidence on safety and adherence insufficient to establish a clinically meaningful advantage.",
+        "citation_ids": [
+          "evidence-3"
+        ]
+      },
+      {
+        "text": "The ACG guideline also emphasizes universal post-treatment test-of-cure, while the supplied evidence does not provide the specific testing method or timing.",
+        "citation_ids": [
+          "evidence-7"
+        ]
+      }
+    ]
+  },
+  "observed_pipeline": {
+    "reason_code": "claim_coverage_failed",
+    "claims_extracted": 7,
+    "citations_mapped": 6,
+    "answer_sentences": 3,
+    "covered_answer_sentences": 0
+  }
+}
